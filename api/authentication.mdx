@@ -1,0 +1,204 @@
+---
+title: "Authenticating with the TrinaxAI RAG API"
+sidebarTitle: "Authentication"
+description: "Chat endpoints are open to trusted LAN origins. System endpoints require localhost access or an admin bearer token set via TRINAXAI_ADMIN_TOKEN."
+---
+
+The TrinaxAI RAG API uses a **two-tier authentication model** that balances local usability with security. Chat and read-only endpoints are intentionally open to trusted LAN origins — so the PWA on your phone works without configuration — while all mutating system endpoints are protected and require either localhost access or an explicit admin bearer token.
+
+---
+
+## Open Endpoints (No Auth Required)
+
+These endpoints are accessible from any origin that passes the CORS filter (private IPs on ports 3334 and 3335 by default):
+
+| Endpoint | Notes |
+|---|---|
+| `POST /v1/chat/completions` | RAG chat; rate-limited to 30 req/min per IP |
+| `GET /health` | Service status overview |
+| `GET /resources` | RAM / VRAM telemetry |
+| `GET /app-state` | Read shared PWA configuration |
+| `GET /collections` | List all RAG collections |
+| `GET /v1/memory` | Read persistent memory entries |
+| `GET /v1/memory/summary` | Read the memory auto-summary |
+| `GET /v1/watch/status` | Check watcher state |
+| `POST /documents/extract` | Extract text from uploaded documents |
+
+---
+
+## Protected Endpoints (Auth Required)
+
+The following endpoints require the caller to be on localhost, a trusted LAN IP (when `TRINAXAI_ALLOW_LAN_SYSTEM=1`), or to supply a valid admin token:
+
+| Group | Endpoints |
+|---|---|
+| **System control** | All `/system/*` routes |
+| **App state** | `PUT /app-state`, `DELETE /app-state` |
+| **Memory writes** | `POST /v1/memory`, `DELETE /v1/memory/{id}`, `POST /v1/memory/refresh` |
+| **Collection management** | `POST /collections`, `PATCH /collections/{id}`, `DELETE /collections/{id}` |
+| **Research** | `POST /v1/research` |
+| **Knowledge Browser** | `GET /v1/sources`, `GET /v1/sources/{collection}/{file}/chunks` |
+| **Usage recording** | `POST /v1/usage`, `GET /v1/stats` |
+| **File watcher** | `POST /v1/watch/start`, `POST /v1/watch/stop` |
+
+<Warning>
+  **Never expose port 3333 directly to the internet.** The TrinaxAI RAG API is designed for local or trusted-LAN use only. If you need remote access, use a VPN (Tailscale, WireGuard) or a reverse proxy with proper TLS termination and access control. See [SECURITY.md](https://github.com/TrinaxCode/TrinaxAI/blob/main/SECURITY.md) for the full threat model.
+</Warning>
+
+---
+
+## Authorization Mechanisms
+
+### 1. Localhost Access (Always Allowed)
+
+Requests originating from `127.0.0.1`, `::1`, or `localhost` are trusted for all system endpoints without any token. This is the default for the CLI and for direct API calls on the host machine.
+
+### 2. LAN Access
+
+By default, system endpoints are **not accessible** from other devices on your network. Enable LAN system control by setting `TRINAXAI_ALLOW_LAN_SYSTEM=1` in your `.env`:
+
+```bash
+# .env
+TRINAXAI_ALLOW_LAN_SYSTEM=1
+TRINAXAI_ADMIN_TOKEN=your-strong-random-token
+```
+
+When `TRINAXAI_ALLOW_LAN_SYSTEM=1` is set, requests from any private or link-local IP (RFC 1918 ranges: `10.x.x.x`, `172.16–31.x.x`, `192.168.x.x`) are considered trusted. The `--lan-system` install flag enables this automatically and generates a strong admin token.
+
+### 3. Admin Bearer Token
+
+Set `TRINAXAI_ADMIN_TOKEN` in `.env` to require a token for all protected endpoints. Pass it in the `Authorization` header:
+
+```
+Authorization: Bearer <your-admin-token>
+```
+
+When a token is configured and an incorrect one is supplied, the API returns `HTTP 403 Forbidden` immediately — it does not fall through to the localhost check.
+
+<Note>
+  The API reads `Authorization: Bearer <token>` via the standard HTTP header. Some internal code also accepts the legacy `X-Admin-Token` header — use the `Authorization` form for all new integrations.
+</Note>
+
+---
+
+## Generating an Admin Token
+
+**Option 1 — OpenSSL (recommended):**
+
+```bash
+openssl rand -hex 32
+```
+
+This produces a 64-character hex string suitable as an admin token.
+
+**Option 2 — Auto-generated during install:**
+
+```bash
+./install.sh --lan-system
+```
+
+The installer generates a strong random token and writes it to `.env` automatically. Retrieve it with:
+
+```bash
+grep TRINAXAI_ADMIN_TOKEN .env
+```
+
+Then add the token to your `.env`:
+
+```bash
+# .env
+TRINAXAI_ADMIN_TOKEN=a1b2c3d4e5f6...  # 64-char hex string
+```
+
+---
+
+## CORS
+
+The CORS middleware is configured with an **explicit allowlist** — not a wildcard `*` — to restrict which browser origins can make cross-origin requests.
+
+**Default allowed origins:**
+
+```
+https://localhost:3334    http://localhost:3334
+https://127.0.0.1:3334   http://127.0.0.1:3334
+https://localhost:3335    http://localhost:3335
+https://127.0.0.1:3335   http://127.0.0.1:3335
+http://localhost:5173     (Vite dev server)
+```
+
+**Default origin regex** (matches private-LAN IPs on ports 3334/3335):
+
+```
+https?://(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+):(3334|3335)
+```
+
+**Customize with `TRINAXAI_CORS_ORIGINS`:**
+
+```bash
+# .env — comma-separated list
+TRINAXAI_CORS_ORIGINS=https://localhost:3334,http://localhost:3334,https://192.168.1.50:3334
+```
+
+Set to `*` only for development — this disables origin checking entirely:
+
+```bash
+TRINAXAI_CORS_ORIGINS=*
+```
+
+---
+
+## Example Requests
+
+<CodeGroup>
+
+```bash Unauthenticated Chat (curl)
+# Chat endpoint — no token required
+curl -X POST https://localhost:3333/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "auto",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "stream": false
+  }' \
+  --insecure
+```
+
+```bash Authenticated System Endpoint (curl)
+# System reload — admin token required
+curl -X POST https://localhost:3333/system/reload \
+  -H 'Authorization: Bearer your-admin-token' \
+  --insecure
+```
+
+```bash Create a Collection (curl)
+# Collection creation — admin token required
+curl -X POST https://localhost:3333/collections \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer your-admin-token' \
+  -d '{"name": "My Project"}' \
+  --insecure
+```
+
+```bash Run Self-Test (curl)
+# Self-test — admin token required
+curl -X POST https://localhost:3333/system/self-test \
+  -H 'Authorization: Bearer your-admin-token' \
+  --insecure
+```
+
+</CodeGroup>
+
+<Note>
+  The `--insecure` flag (or `-k`) is required when using `curl` against `https://localhost:3333` because TrinaxAI uses a **self-signed certificate**. In Python, the equivalent is `verify=False` in `requests`, or setting `TRINAXAI_TLS_VERIFY=0` to use the built-in `create_ssl_context()` helper in `config.py`.
+</Note>
+
+---
+
+## Summary
+
+| Caller | Localhost | LAN (`ALLOW_LAN_SYSTEM=1`) | Remote |
+|---|---|---|---|
+| Open endpoints | ✅ Allowed | ✅ Allowed (CORS filter) | ✅ Allowed (CORS filter) |
+| System endpoints (no token set) | ✅ Allowed | ✅ Allowed | ❌ Blocked |
+| System endpoints (token set, correct) | ✅ Allowed | ✅ Allowed | ✅ Allowed |
+| System endpoints (token set, wrong) | ❌ 403 | ❌ 403 | ❌ 403 |

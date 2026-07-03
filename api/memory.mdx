@@ -1,0 +1,315 @@
+---
+title: "Memory API: Persistent Facts Across Conversations"
+sidebarTitle: "Memory"
+description: "GET, POST, and DELETE endpoints to manage TrinaxAI's local persistent memory — facts that survive across chat sessions and devices."
+---
+
+TrinaxAI's memory system lets you store persistent facts, preferences, and decisions that are injected into the LLM context on every chat session. Memory entries are stored locally in `storage/user_memory.json` and survive restarts. A separate LLM-generated summary (`storage/user_memory_summary.json`) condenses all entries into a short context paragraph that is automatically prepended to chat queries.
+
+<Note>
+  `GET /v1/memory` and `GET /v1/memory/summary` require authorization (localhost/LAN or `X-Admin-Token`). All write operations — `POST`, `DELETE`, and `POST /v1/memory/refresh` — also require authorization.
+</Note>
+
+---
+
+## GET /v1/memory
+
+List all stored memory entries in insertion order.
+
+### Response
+
+<ResponseField name="memories" type="array">
+  Array of memory entry objects.
+
+  <Expandable title="Memory entry">
+    <ResponseField name="id" type="string">
+      Unique hex identifier for the memory entry (UUID4 without hyphens).
+    </ResponseField>
+    <ResponseField name="text" type="string">
+      The stored fact or preference text.
+    </ResponseField>
+    <ResponseField name="created_at" type="number">
+      Unix timestamp when the entry was created.
+    </ResponseField>
+    <ResponseField name="tags" type="array">
+      Optional list of string tags for categorization (e.g. `["pref", "python"]`).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```bash
+curl http://localhost:3333/v1/memory \
+  -H "X-Admin-Token: your-token"
+```
+
+```json Response
+{
+  "memories": [
+    {
+      "id": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+      "text": "User prefers Python 3.12+ with type hints",
+      "created_at": 1718000000.0,
+      "tags": ["pref", "python"]
+    },
+    {
+      "id": "b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5",
+      "text": "Production database is PostgreSQL 15 on port 5433",
+      "created_at": 1718050000.0,
+      "tags": ["infra", "db"]
+    }
+  ]
+}
+```
+
+---
+
+## POST /v1/memory
+
+Append a new persistent memory entry. The entry is immediately written to disk and included in future summary refreshes.
+
+### Request body
+
+<ParamField body="text" type="string" required>
+  The fact, preference, or decision to remember. Must be a non-empty string after trimming whitespace.
+</ParamField>
+
+<ParamField body="tags" type="array">
+  Optional list of string tags for categorization. Empty strings are ignored.
+</ParamField>
+
+### Response
+
+The newly created memory entry object.
+
+<ResponseField name="id" type="string">Unique hex ID of the new entry.</ResponseField>
+<ResponseField name="text" type="string">The stored text, as provided.</ResponseField>
+<ResponseField name="created_at" type="number">Unix timestamp of creation.</ResponseField>
+<ResponseField name="tags" type="array">The sanitized tags list.</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:3333/v1/memory \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: your-token" \
+  -d '{
+    "text": "User prefers Python 3.12+ with type hints",
+    "tags": ["pref", "python"]
+  }'
+```
+
+```json Response
+{
+  "id": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+  "text": "User prefers Python 3.12+ with type hints",
+  "created_at": 1718000000.0,
+  "tags": ["pref", "python"]
+}
+```
+
+---
+
+## DELETE /v1/memory/{memory_id}
+
+Delete a single memory entry by its ID. If the ID does not exist, the response still returns `200` with `deleted: false`.
+
+### Path parameters
+
+<ParamField path="memory_id" type="string" required>
+  The hex ID of the memory entry to delete.
+</ParamField>
+
+### Response
+
+<ResponseField name="deleted" type="boolean">
+  `true` if an entry with the given ID was found and removed. `false` if the ID was not found.
+</ResponseField>
+
+### Example
+
+```bash
+curl -X DELETE \
+  http://localhost:3333/v1/memory/a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4 \
+  -H "X-Admin-Token: your-token"
+```
+
+```json Response
+{
+  "deleted": true
+}
+```
+
+---
+
+## POST /v1/memory/refresh
+
+Re-summarize all stored memory entries into a short (3–5 sentence) context-injection note using the configured local LLM. The result is saved to `storage/user_memory_summary.json` and will be used in subsequent chat sessions.
+
+<Tip>
+  Call this endpoint after adding or deleting several memory entries in bulk to ensure the injected summary is up to date.
+</Tip>
+
+### Response
+
+<ResponseField name="status" type="string">Always `"refreshed"` on success.</ResponseField>
+<ResponseField name="summary" type="string">
+  The newly generated summary text. Empty string if there are no memory entries.
+</ResponseField>
+<ResponseField name="count" type="integer">
+  Number of memory entries that were summarized.
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:3333/v1/memory/refresh \
+  -H "X-Admin-Token: your-token"
+```
+
+```json Response
+{
+  "status": "refreshed",
+  "summary": "The user prefers Python 3.12+ with type hints and uses PostgreSQL 15 on port 5433. The production stack runs on Django with React/TypeScript on the frontend. Firebase is used for authentication in the mobile app.",
+  "count": 7
+}
+```
+
+---
+
+## GET /v1/memory/summary
+
+Read the current LLM-generated memory summary without triggering a refresh. The summary is pre-computed and served from disk, so this call is always fast.
+
+### Response
+
+<ResponseField name="summary" type="string">
+  The stored summary text, or an empty string if no summary has been generated yet.
+</ResponseField>
+<ResponseField name="count" type="integer">
+  Number of memory entries that the summary was built from.
+</ResponseField>
+<ResponseField name="updated_at" type="number">
+  Unix timestamp of when the summary was last generated. `0.0` if no summary exists yet.
+</ResponseField>
+
+### Example
+
+```bash
+curl http://localhost:3333/v1/memory/summary \
+  -H "X-Admin-Token: your-token"
+```
+
+```json Response
+{
+  "summary": "The user prefers Python 3.12+ with type hints and uses PostgreSQL 15 on port 5433.",
+  "count": 7,
+  "updated_at": 1718100000.0
+}
+```
+
+---
+
+## App State (Cross-Device Sync)
+
+The app-state endpoints provide a lightweight key-value store (persisted to `storage/app_state.json`) for syncing PWA settings, preferences, and UI state across devices connected to the same TrinaxAI host. All keys must begin with the `tc-` prefix.
+
+### GET /app-state
+
+Read the shared app state. This endpoint is open — no authorization is required.
+
+### Response
+
+<ResponseField name="ok" type="boolean">Always `true`.</ResponseField>
+<ResponseField name="values" type="object">
+  Dictionary of `tc-*` keys to string values. Returns an empty object `{}` if no state has been saved yet.
+</ResponseField>
+
+```bash
+curl http://localhost:3333/app-state
+```
+
+```json Response
+{
+  "ok": true,
+  "values": {
+    "tc-theme": "dark",
+    "tc-language": "en",
+    "tc-active-collection": "my-project"
+  }
+}
+```
+
+---
+
+### PUT /app-state
+
+Merge new key-value pairs into the shared app state. Existing keys not present in `values` are preserved. Only keys prefixed with `tc-` are accepted; others are silently ignored. The maximum payload size is **6 MB** (configurable via `TRINAXAI_APP_STATE_MAX_BYTES`).
+
+<Note>
+  Requires authorization.
+</Note>
+
+#### Request body
+
+<ParamField body="values" type="object" required>
+  Object of `tc-*` string keys to string values to merge into the shared state.
+</ParamField>
+
+```bash
+curl -X PUT http://localhost:3333/app-state \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: your-token" \
+  -d '{"values": {"tc-theme": "dark", "tc-language": "en"}}'
+```
+
+```json Response
+{
+  "ok": true,
+  "values": {
+    "tc-theme": "dark",
+    "tc-language": "en"
+  }
+}
+```
+
+---
+
+### DELETE /app-state
+
+Nuclear reset of the shared app state. Clears all `tc-*` values, cancels any running index jobs, stops the file watcher, unloads the retriever, and wipes the index storage directory. This is a **full factory reset** of the TrinaxAI runtime state on the host machine.
+
+<Warning>
+  This operation is irreversible and extremely destructive. It wipes the index, all collections (resetting to the default), the watcher, and all running jobs. You will need to re-upload and re-index all content. This endpoint requires both authorization **and** the `X-TrinaxAI-Confirm: reset-app-state` header as a double-confirmation guard.
+</Warning>
+
+#### Required headers
+
+| Header | Value |
+|--------|-------|
+| `X-Admin-Token` | Your admin token (or localhost/LAN access) |
+| `X-TrinaxAI-Confirm` | Must be exactly `reset-app-state` |
+
+```bash
+curl -X DELETE http://localhost:3333/app-state \
+  -H "X-Admin-Token: your-token" \
+  -H "X-TrinaxAI-Confirm: reset-app-state"
+```
+
+```json Response
+{
+  "ok": true,
+  "values": {"tc-reset-at": "1718300000.0"},
+  "removed": ["storage/docstore.json", "storage/index_store.json", "local_sources/collections/my-project"],
+  "indexed": false,
+  "collections": [
+    {
+      "id": "default",
+      "name": "General",
+      "created_at": 1718300000.0,
+      "updated_at": 1718300000.0
+    }
+  ]
+}
+```

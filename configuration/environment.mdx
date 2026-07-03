@@ -1,0 +1,345 @@
+---
+title: "TrinaxAI Environment Variable Reference"
+sidebarTitle: "Environment Variables"
+description: "Complete reference for all TrinaxAI .env variables — models, embeddings, chunking, retrieval, security, and PWA frontend settings."
+---
+
+TrinaxAI is configured entirely through environment variables loaded from a `.env` file in the repo root. Every variable is optional — the system auto-detects your hardware and applies profile-based defaults. Copy `.env.example` to `.env` and override only what you need.
+
+```bash
+cp .env.example .env
+```
+
+<Note>
+  All defaults shown below are for the **16gb** profile (the factory default). Actual runtime defaults vary by the active `TRINAXAI_PROFILE`. Run `trinaxai doctor` to inspect what values are in effect.
+</Note>
+
+---
+
+## Profile & Performance
+
+These two variables are the highest-level controls. They cascade into dozens of downstream defaults — model sizes, context windows, embed workers, chunk sizes, and retrieval depth.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `TRINAXAI_PROFILE` | `string` | `16gb` | Hardware profile. Valid values: `4gb`, `8gb`, `16gb`, `max`, `ultra`. Auto-detected by the installer; override manually when needed. |
+| `TRINAXAI_PERFORMANCE_MODE` | `string` | `fast` | Trade-off between speed and retrieval quality. `fast` — smaller chunks, lower TOP\_K, snappier responses. `balanced` — middle ground. `quality` — larger context, more retrieval candidates, slower. |
+
+```dotenv
+TRINAXAI_PROFILE=16gb
+TRINAXAI_PERFORMANCE_MODE=fast
+```
+
+<Tip>
+  Use `--profile ultra` at install time or set `TRINAXAI_PROFILE=max` in `.env` to switch profiles without reinstalling. See [Hardware Profiles](/configuration/profiles) for the full per-profile breakdown.
+</Tip>
+
+---
+
+## Network
+
+Controls where the RAG API binds and how it communicates with Ollama.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `TRINAXAI_HOST` | `string` | `0.0.0.0` | Bind address for the RAG API. Use `127.0.0.1` for localhost-only (no LAN access). |
+| `TRINAXAI_PORT` | `int` | `3333` | TCP port for the RAG API (FastAPI/uvicorn). |
+| `TRINAXAI_RAG_HTTPS` | `bool` | `1` | Set to `1` to serve the RAG API over HTTPS with a self-signed certificate. Set to `0` for plain HTTP (not recommended in LAN environments). |
+| `OLLAMA_BASE_URL` | `string` | `http://localhost:11434` | URL of the Ollama API. Change if Ollama runs on a different host or port. |
+
+```dotenv
+TRINAXAI_HOST=0.0.0.0
+TRINAXAI_PORT=3333
+TRINAXAI_RAG_HTTPS=1
+OLLAMA_BASE_URL=http://localhost:11434
+```
+
+<Warning>
+  Leaving `TRINAXAI_HOST=0.0.0.0` exposes the RAG API on your local network. This is intentional for LAN PWA/phone access, but make sure `TRINAXAI_ALLOW_LAN_SYSTEM` is `0` (the default) unless you understand the implications.
+</Warning>
+
+---
+
+## Model Fleet
+
+TrinaxAI maintains a fleet of four models and automatically routes each query to the most appropriate one. You can override individual fleet slots or disable the router entirely.
+
+| Variable | Type | Default (16gb) | Description |
+|---|---|---|---|
+| `TRINAXAI_MODEL_GENERAL` | `string` | `llama3.2:3b` | General-purpose chat model for non-code questions. Low-resource profiles default to `llama3.2:1b`. |
+| `TRINAXAI_MODEL_CODE` | `string` | `qwen2.5-coder:3b` | Code-focused model for regular coding tasks. Low-resource profiles default to `qwen2.5-coder:1.5b`. |
+| `TRINAXAI_MODEL_DEEP` | `string` | `qwen2.5-coder:7b` | Deep-analysis model for complex refactoring, architecture, and multi-file queries. `ultra` profile defaults to `qwen2.5-coder:14b`. |
+| `TRINAXAI_MODEL_FAST` | `string` | `llama3.2:3b` | Lightweight model for short, trivial queries (greetings, simple lookups). Defaults to `MODEL_GENERAL`. |
+| `TRINAXAI_LLM` | `string` | `qwen2.5-coder:3b` | Fallback model when `TRINAXAI_AUTO_ROUTE=0`. Defaults to `MODEL_CODE`. |
+| `TRINAXAI_LLM_HEAVY` | `string` | `qwen2.5-coder:7b` | Heavy fallback model when `TRINAXAI_AUTO_ROUTE=0`. Defaults to `MODEL_DEEP`. |
+| `TRINAXAI_AUTO_ROUTE` | `bool` | `1` | Set to `0` to disable the heuristic model router and always use `TRINAXAI_LLM`. |
+
+```dotenv
+# Fleet overrides — only set what you want to change
+TRINAXAI_MODEL_GENERAL=llama3.2:3b
+TRINAXAI_MODEL_CODE=qwen2.5-coder:3b
+TRINAXAI_MODEL_DEEP=qwen2.5-coder:7b
+TRINAXAI_MODEL_FAST=llama3.2:3b
+
+# Disable router and always use a single model
+# TRINAXAI_AUTO_ROUTE=0
+# TRINAXAI_LLM=qwen2.5-coder:3b
+```
+
+<Accordion title="How auto-routing works">
+  The router classifies each query using an offline heuristic — no LLM call required. It checks for:
+
+  - **Deep hints** (query length > 600 chars, words like `refactor`, `architecture`, `debug`, `security`) → routes to `MODEL_DEEP`
+  - **Code hints** (backtick present, keywords like `function`, `import`, `.py`, `.ts`) → routes to `MODEL_CODE`
+  - **Trivial queries** (< 25 chars, greetings) → routes to `MODEL_FAST`
+  - **Everything else** → routes to `MODEL_GENERAL`
+</Accordion>
+
+---
+
+## Embeddings
+
+Controls which embedding model is used for indexing and retrieval. Three presets are available; you can also override the model and dimensions individually.
+
+| Variable | Type | Default (16gb) | Description |
+|---|---|---|---|
+| `TRINAXAI_EMBED_PRESET` | `string` | `balanced` | Embedding preset. `balanced` = bge-m3 (multilingual, 1024 dims). `lite` = nomic-embed-text (768 dims, English-leaning). `fast` = all-minilm (384 dims, smallest). Low-resource profiles default to `lite`. |
+| `TRINAXAI_EMBED` | `string` | `bge-m3` | Override the embedding model name directly, bypassing the preset. |
+| `TRINAXAI_EMBED_DIMS` | `int` | `1024` | Embedding vector dimensions. Must match the model. Set automatically by preset; override only if using a custom model. |
+
+```dotenv
+# Use the balanced preset (default for 16gb+)
+# TRINAXAI_EMBED_PRESET=balanced   # bge-m3, 1024 dims, multilingual
+# TRINAXAI_EMBED_PRESET=lite       # nomic-embed-text, 768 dims, faster
+# TRINAXAI_EMBED_PRESET=fast       # all-minilm, 384 dims, smallest
+
+# Or override model + dims manually
+# TRINAXAI_EMBED=bge-m3
+# TRINAXAI_EMBED_DIMS=1024
+```
+
+| Preset | Model | Dims | Context | Best for |
+|---|---|---|---|---|
+| `balanced` | `bge-m3` | 1024 | 8192 | Multilingual, highest quality |
+| `lite` | `nomic-embed-text` | 768 | 2048 | Faster, English-leaning |
+| `fast` | `all-minilm` | 384 | 512 | Smallest, English-only |
+
+---
+
+## Context & Threads
+
+| Variable | Type | Default (16gb) | Description |
+|---|---|---|---|
+| `TRINAXAI_NUM_CTX` | `int` | `4096` | Token context window passed to Ollama. Must fit: system prompt + retrieved chunks + response. Auto-scaled by profile: `2048` (low-resource), `4096` (16gb), `8192` (max), `16384` (ultra). |
+| `TRINAXAI_NUM_THREAD` | `int` | `8` | CPU threads allocated per Ollama request. 8 threads avoids over-subscription when several embedding workers run concurrently. Raise on high-core-count machines. |
+
+```dotenv
+# TRINAXAI_NUM_CTX=4096
+# TRINAXAI_NUM_THREAD=8
+```
+
+<Note>
+  Setting `TRINAXAI_NUM_THREAD` too high (e.g., equal to your total core count) can make concurrent embeddings slower, not faster, due to thread contention. The default of 8 is intentionally conservative.
+</Note>
+
+---
+
+## Embedding Concurrency
+
+| Variable | Type | Default (16gb) | Description |
+|---|---|---|---|
+| `TRINAXAI_EMBED_WORKERS` | `int` | `2` | Concurrent workers sending embedding requests to Ollama. Profile defaults: `1` (low-resource), `2` (16gb), `4` (max), `6` (ultra). Maximum value: 16. |
+| `TRINAXAI_EMBED_BATCH` | `int` | `8` | Number of text chunks sent to Ollama per embedding call. Larger batches reduce per-request HTTP overhead. Profile defaults: `1` (low-resource), `8` (16gb/max), `16` (ultra). |
+
+```dotenv
+# TRINAXAI_EMBED_WORKERS=2
+# TRINAXAI_EMBED_BATCH=8
+```
+
+---
+
+## Keep-Alive
+
+Controls how long Ollama keeps models loaded in RAM between requests. Longer keep-alive = faster subsequent responses but higher memory use.
+
+| Variable | Type | Default (16gb) | Description |
+|---|---|---|---|
+| `TRINAXAI_KEEP_ALIVE` | `string` | `10m` | Keep-alive duration for LLM (chat/code) models. Profile defaults: `0s` (low-resource), `10m` (16gb fast mode), `30m` (max), `60m` (ultra). Ollama duration format: `0s`, `15m`, `1h`. |
+| `TRINAXAI_EMBED_KEEP_ALIVE` | `string` | `15m` | Keep-alive for the embedding model. Kept warm separately from chat models to avoid sawtooth reload cost during indexing. Profile defaults: `10m` (low-resource), `15m` (16gb), `30m` (max/ultra). |
+| `TRINAXAI_TIMEOUT` | `float` | `300` | Request timeout in seconds for Ollama API calls. Increase for very long generations on slow hardware. |
+
+```dotenv
+# TRINAXAI_KEEP_ALIVE=10m
+# TRINAXAI_EMBED_KEEP_ALIVE=15m
+# TRINAXAI_TIMEOUT=300
+```
+
+---
+
+## Chunking
+
+Controls how documents are split before embedding. Code files use AST-aware chunking that respects function and class boundaries.
+
+| Variable | Type | Default (16gb) | Description |
+|---|---|---|---|
+| `TRINAXAI_CHUNK_SIZE` | `int` | `1024` | Token chunk size for prose (Markdown, PDF, TXT, config files). Profile/mode defaults: `896` (fast mode), `1024` (balanced/quality), `1536` (ultra). |
+| `TRINAXAI_CHUNK_OVERLAP` | `int` | `150` | Token overlap between adjacent prose chunks. Mode defaults: `96` (fast mode), `150` (balanced/quality), `220` (ultra). |
+| `TRINAXAI_CODE_CHUNK_LINES` | `int` | `60` | Lines per code chunk (AST-based). Chunks respect function/class boundaries. |
+| `TRINAXAI_CODE_CHUNK_LINES_OVERLAP` | `int` | `12` | Line overlap between code chunks. Mode default: `8` (fast mode), `12` (balanced/quality). |
+| `TRINAXAI_CODE_MAX_CHARS` | `int` | `2000` | Maximum character length of a code chunk. Prevents oversized single-function chunks. |
+
+```dotenv
+# TRINAXAI_CHUNK_SIZE=1024
+# TRINAXAI_CHUNK_OVERLAP=150
+# TRINAXAI_CODE_CHUNK_LINES=60
+# TRINAXAI_CODE_CHUNK_LINES_OVERLAP=12
+# TRINAXAI_CODE_MAX_CHARS=2000
+```
+
+---
+
+## Retrieval
+
+Controls how many chunks are retrieved and how they are ranked before being passed to the LLM.
+
+| Variable | Type | Default (16gb) | Description |
+|---|---|---|---|
+| `TRINAXAI_SIMILARITY_TOP_K` | `int` | `4` | Final number of chunks injected into the LLM prompt. Profile/mode defaults: `3` (low-resource fast), `4` (16gb fast), `5` (16gb quality / max), `6` (ultra), `8` (ultra quality). Raise for broader answers; lower to reduce latency. |
+| `TRINAXAI_FUSION_CANDIDATES` | `int` | `8` | Candidates each retriever (vector search and BM25 keyword search) contributes before fusion. Profile defaults: `6` (low-resource fast), `8` (16gb fast), `12` (max), `20` (ultra), `32` (ultra quality). |
+| `TRINAXAI_RETRIEVAL_CACHE_SECONDS` | `int` | `20` | TTL (seconds) for cached RAG retrieval results. Identical repeated queries skip re-embedding and re-retrieval. Set to `0` to disable. |
+| `TRINAXAI_SOURCES_CACHE_SECONDS` | `int` | `30` | TTL (seconds) for cached Knowledge Browser source/chunk listings. |
+
+```dotenv
+# TRINAXAI_SIMILARITY_TOP_K=4
+# TRINAXAI_FUSION_CANDIDATES=8
+# TRINAXAI_RETRIEVAL_CACHE_SECONDS=20
+# TRINAXAI_SOURCES_CACHE_SECONDS=30
+```
+
+---
+
+## Reranking
+
+Cross-encoder reranking dramatically improves retrieval precision by re-scoring candidates based on their actual relevance to the query. Disabled by default; requires additional Python dependencies.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `TRINAXAI_RERANK` | `bool` | `0` | Set to `1` to enable cross-encoder reranking. Requires `pip install -r requirements-rerank.txt`. Loads ~2 GB model into RAM. |
+| `TRINAXAI_RERANK_MODEL` | `string` | `BAAI/bge-reranker-v2-m3` | HuggingFace model ID for the cross-encoder. `bge-reranker-v2-m3` is multilingual and state-of-the-art. |
+| `TRINAXAI_RERANK_TOP_N` | `int` | _(matches `TOP_K`)_ | Number of candidates to keep after reranking. Defaults to `TRINAXAI_SIMILARITY_TOP_K`. |
+
+```dotenv
+# TRINAXAI_RERANK=0
+# TRINAXAI_RERANK_MODEL=BAAI/bge-reranker-v2-m3
+# TRINAXAI_RERANK_TOP_N=5
+```
+
+<Tip>
+  Enable reranking on `max` or `ultra` profiles for the best precision. The reranker narrows a large set of `FUSION_CANDIDATES` down to the `RERANK_TOP_N` most relevant chunks, which more than compensates for its RAM cost.
+</Tip>
+
+---
+
+## Indexing
+
+Controls what gets indexed, where it's stored, and how uploads are handled.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `TRINAXAI_INDEX_DIR` | `string` | _(parent of repo)_ | Directory to index recursively. Set to `~/Documents`, `~/Projects`, or any path. Supports `~` expansion. |
+| `TRINAXAI_MAX_FILE_BYTES` | `int` | `3145728` | Maximum file size to index, in bytes (default: 3 MB). Files larger than this are skipped to avoid enormous chunks from generated files. |
+| `TRINAXAI_UPLOAD_MAX_FILES` | `int` | `2500` | Maximum number of files accepted in a single upload batch. |
+| `TRINAXAI_UPLOAD_MAX_BYTES` | `int` | `536870912` | Maximum total upload size per batch, in bytes (default: 512 MB). |
+| `TRINAXAI_COLLECTION_ID` | `string` | `default` | Active collection ID for indexing and querying. |
+| `TRINAXAI_COLLECTION_NAME` | `string` | `General` | Human-readable name for the default collection. |
+| `TRINAXAI_INDEX_APPEND` | `bool` | `0` | Set to `1` for append-only mode — skip files already in the manifest, only add new ones. Useful for large codebases where re-indexing is slow. |
+| `TRINAXAI_INDEX_BATCH_SIZE` | `int` | `100` | Files processed per indexing batch. Lower values use less RAM; higher values can be faster on fast storage. |
+
+```dotenv
+# TRINAXAI_INDEX_DIR=~/Documents
+# TRINAXAI_MAX_FILE_BYTES=3145728
+# TRINAXAI_UPLOAD_MAX_FILES=2500
+# TRINAXAI_UPLOAD_MAX_BYTES=536870912
+# TRINAXAI_COLLECTION_ID=default
+# TRINAXAI_COLLECTION_NAME=General
+# TRINAXAI_INDEX_APPEND=0
+# TRINAXAI_INDEX_BATCH_SIZE=100
+```
+
+---
+
+## Security
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `TRINAXAI_CORS_ORIGINS` | `string` | `https://localhost:3334,http://localhost:3334` | Comma-separated list of allowed CORS origins. Set `*` to allow all (not recommended). Add your LAN IP when accessing from other devices. |
+| `TRINAXAI_ALLOW_LAN_SYSTEM` | `bool` | `0` | Allow `/system/*` endpoints from LAN origins. **Disabled by default.** Enable only on trusted networks after setting `TRINAXAI_ADMIN_TOKEN`. |
+| `TRINAXAI_ADMIN_TOKEN` | `string` | _(empty)_ | Bearer token required for protected `/system/*` endpoints when called from non-localhost origins. Auto-generated when installing with `--lan-system`. |
+
+```dotenv
+TRINAXAI_CORS_ORIGINS=https://localhost:3334,http://localhost:3334
+# TRINAXAI_ALLOW_LAN_SYSTEM=0
+# TRINAXAI_ADMIN_TOKEN=
+```
+
+See [Security Model](/security/model) for the full access control and CORS documentation.
+
+---
+
+## GPU & Quantization
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `OLLAMA_NUM_GPU` | `string` | _(empty / auto)_ | Number of GPU layers to offload to the GPU (Ollama native). Leave empty for Ollama auto-detection, or set explicitly (e.g., `35`) to control VRAM usage. |
+| `TRINAXAI_AGGRESSIVE_QUANT` | `bool` | `0` | Set to `1` to enable aggressive Q4\_K\_M-style quantization profile. Reduces RAM usage at some quality cost. Exposes the setting to the `/health` endpoint and configures Ollama hints accordingly. |
+
+```dotenv
+# OLLAMA_NUM_GPU=
+# TRINAXAI_AGGRESSIVE_QUANT=0
+```
+
+---
+
+## OCR
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `TRINAXAI_OCR` | `bool` | `0` | Set to `1` to enable Tesseract OCR for scanned PDFs. Requires the `tesseract` system package (`apt install tesseract-ocr` / `brew install tesseract`). |
+
+```dotenv
+# TRINAXAI_OCR=0
+```
+
+---
+
+## PWA / Frontend
+
+These variables configure the Vite build and the PWA frontend. Most are set at build time and baked into the frontend bundle.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `TRINAXAI_FRONTEND_URL` | `string` | `https://localhost:3334` | Public URL of the PWA frontend. Used for CORS and service worker scope. |
+| `VITE_TRINAXAI_RAG_TARGET` | `string` | `https://127.0.0.1:3333` | URL the Vite dev proxy forwards `/api/rag` requests to. Should point to the RAG API. |
+| `VITE_TRINAXAI_VISION_MODEL` | `string` | `qwen2.5vl:3b` | Vision model used for image analysis in the PWA. |
+| `VITE_TRINAXAI_VISION_QUALITY_MODEL` | `string` | `qwen2.5vl:7b` | High-quality vision model used when the user selects quality mode. |
+
+<Accordion title="Additional Vite build variables">
+  | Variable | Default | Description |
+  |---|---|---|
+  | `TRINAXAI_FRONTEND_MODE` | `preview` | Vite mode (`development` or `preview`). |
+  | `TRINAXAI_RAG_TARGET` | `https://127.0.0.1:3333` | Server-side RAG proxy target. |
+  | `VITE_TRINAXAI_RAG_BASE` | `/api/rag` | Base path for RAG API requests from the PWA. |
+  | `VITE_TRINAXAI_OLLAMA_BASE` | `/api/ollama` | Base path for Ollama API requests from the PWA. |
+  | `VITE_TRINAXAI_DEV_RAG_BASE` | `/api/rag` | RAG base path in dev mode. |
+  | `VITE_TRINAXAI_DEV_OLLAMA_BASE` | `/api/ollama` | Ollama base path in dev mode. |
+  | `VITE_TRINAXAI_INDEX_DIR` | `~/Documents` | Default index directory shown in the PWA settings. |
+  | `VITE_TRINAXAI_REPO_URL` | `https://github.com/TrinaxCode/TrinaxAI` | Repository link shown in the PWA. |
+  | `VITE_TRINAXAI_DOCS_URL` | `https://github.com/TrinaxCode/TrinaxAI#readme` | Docs link shown in the PWA. |
+</Accordion>
+
+```dotenv
+TRINAXAI_FRONTEND_URL=https://localhost:3334
+VITE_TRINAXAI_RAG_TARGET=https://127.0.0.1:3333
+VITE_TRINAXAI_VISION_MODEL=qwen2.5vl:3b
+VITE_TRINAXAI_VISION_QUALITY_MODEL=qwen2.5vl:7b
+```

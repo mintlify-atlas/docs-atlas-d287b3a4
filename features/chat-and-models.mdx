@@ -1,0 +1,152 @@
+---
+title: "Chat and Model Auto-Routing in TrinaxAI"
+sidebarTitle: "Chat & Models"
+description: "TrinaxAI auto-routes each query to the best Ollama model — general, code, deep, or fast — with no latency overhead from the router itself."
+---
+
+TrinaxAI provides two distinct chat engines and an intelligent auto-router that silently selects the right Ollama model for every message. The router runs entirely offline — no LLM call, no latency — so you always get the best model without waiting.
+
+## Two Chat Engines
+
+<CardGroup cols={2}>
+  <Card title="RAG Engine" icon="magnifying-glass">
+    Retrieves relevant chunks from your indexed codebase before generating a response. Every answer includes source citations (file, project, snippet, score). Best for questions *about your code* or documents you've indexed.
+  </Card>
+  <Card title="Ollama Engine" icon="bolt">
+    Sends messages directly to Ollama with no retrieval step. Faster, more creative, and better for general knowledge questions that don't need codebase context.
+  </Card>
+</CardGroup>
+
+### Switching Engines
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash
+    # Force RAG engine (retrieval + citations)
+    trinaxai --engine rag
+
+    # Force Ollama engine (direct chat, no retrieval)
+    trinaxai --engine ollama
+
+    # Default: auto-detect based on whether an index exists
+    trinaxai chat
+    ```
+  </Tab>
+  <Tab title="PWA">
+    In the PWA chat interface, use the engine toggle in the message input bar. The active engine is shown next to the send button — click it to switch between **RAG** and **Ollama** mode.
+
+    You can also use slash commands:
+    - `/index` — trigger an index operation from the chat input
+    - `/memory` — open the memory panel from the chat input
+  </Tab>
+</Tabs>
+
+## Auto-Routing Heuristic
+
+When auto-routing is active (`TRINAXAI_AUTO_ROUTE=1`, the default), TrinaxAI calls `route_model()` in `config.py` on every query. This function runs in microseconds with no LLM call:
+
+```python
+def route_model(text: str) -> str:
+    t = text.lower()
+    is_code = ("`" in text) or any(h in t for h in _CODE_HINTS)
+    is_deep = len(text) > 600 or any(h in t for h in _DEEP_HINTS)
+    if is_deep:
+        return MODEL_DEEP   # complex (code or not) → large model
+    if is_code:
+        return MODEL_CODE   # regular code → coder model
+    if len(text.strip()) < 25:
+        return MODEL_FAST   # greeting / trivial → ultra-fast
+    return MODEL_GENERAL    # general chat → llama3.2
+```
+
+**Code hints** — keywords that indicate a coding question: `function`, `def `, `class `, `import`, `const `, `react`, `python`, `typescript`, `api`, `endpoint`, `sql`, `bug`, `error`, `docker`, `git`, `.py`, `.ts`, `.js`, and more.
+
+**Deep hints** — keywords that indicate complexity requiring the larger model: `refactor`, `architecture`, `debug`, `performance`, `security`, `explain in detail`, `step by step`, `analyze`, `review`, and more. Messages longer than 600 characters are also routed to the deep model.
+
+**Fast route** — messages shorter than 25 characters (greetings, one-word questions) use `MODEL_FAST` to minimise latency.
+
+## Model Fleet
+
+The model assigned to each role depends on your hardware profile. All model names are real Ollama model identifiers.
+
+| Role | Variable | 8gb Profile | 16gb Profile | max Profile | ultra Profile |
+|---|---|---|---|---|---|
+| **General** | `TRINAXAI_MODEL_GENERAL` | `llama3.2:1b` | `llama3.2:3b` | `llama3.2:3b` | `llama3.2:3b` |
+| **Code** | `TRINAXAI_MODEL_CODE` | `qwen2.5-coder:1.5b` | `qwen2.5-coder:3b` | `qwen2.5-coder:3b` | `qwen2.5-coder:3b` |
+| **Deep** | `TRINAXAI_MODEL_DEEP` | `qwen2.5-coder:1.5b` | `qwen2.5-coder:3b` | `qwen2.5-coder:7b` | `qwen2.5-coder:14b` |
+| **Fast** | `TRINAXAI_MODEL_FAST` | `llama3.2:1b` | `llama3.2:3b` | `llama3.2:3b` | `llama3.2:3b` |
+
+<Note>
+  On the `8gb` profile, `MODEL_DEEP` falls back to `MODEL_CODE` since there isn't enough RAM for larger models. On `ultra`, the deep model scales up to `qwen2.5-coder:14b`.
+</Note>
+
+Override any model for your specific setup by setting the corresponding env variable:
+
+```bash
+# .env
+TRINAXAI_MODEL_GENERAL=llama3.2:3b
+TRINAXAI_MODEL_CODE=qwen2.5-coder:3b
+TRINAXAI_MODEL_DEEP=qwen2.5-coder:7b
+TRINAXAI_MODEL_FAST=llama3.2:3b
+```
+
+## Hardware Profiles and Context Windows
+
+Each profile sets a default `NUM_CTX` (the Ollama context window in tokens) that fits within the available RAM alongside the model and embeddings.
+
+| Profile | RAM Target | NUM_CTX | Embed Workers | Embed Batch |
+|---|---|---|---|---|
+| `8gb` | ~8 GB | 2048 | 1 | 1 |
+| `16gb` | ~16 GB | 4096 | 2 | 8 |
+| `max` | 32 GB+ | 8192 | 4 | 8 |
+| `ultra` | 64 GB+ / GPU | 16384 | 6 | 16 |
+
+Override with `TRINAXAI_NUM_CTX=<value>`. The context window must fit: system prompt + retrieved chunks + conversation history + response.
+
+## Streaming SSE Chat
+
+Both the RAG and Ollama engines stream responses to the PWA using Server-Sent Events (SSE). The RAG stream from `POST /v1/chat/completions` emits:
+
+1. `{"trinaxai": {"model": "...", "project": "..."}}` — metadata header
+2. `{"choices": [{"delta": {"content": "token"}}]}` — one event per token
+3. `{"trinaxai_sources": [...]}` — source citations after the full response
+4. `data: [DONE]` — stream terminator
+
+The PWA renders tokens incrementally with Markdown support as they arrive.
+
+## Conversation History and Context
+
+Each chat session maintains a conversation history in `localStorage`. When you send a message, the last 4 assistant/user turns are included in the synthesis prompt under `CONVERSACIÓN PREVIA`. This lets the model understand follow-up questions without needing an explicit query rewriter.
+
+The retrieval query is also enriched: it prepends the previous user turn to the current message, so "and what about the tests?" correctly retrieves test-related chunks even though the current message alone has no context.
+
+## Model Keep-Alive
+
+`TRINAXAI_KEEP_ALIVE` controls how long Ollama keeps a model loaded in RAM after responding. Keeping the model warm avoids the reload cost (~1–5 seconds) on the next request.
+
+| Profile | Default Keep-Alive |
+|---|---|
+| `8gb` | `0s` (unload immediately — RAM is tight) |
+| `16gb` | `10m` (in fast mode) |
+| `max` | `30m` |
+| `ultra` | `60m` |
+
+```bash
+# .env — keep models warm for 30 minutes
+TRINAXAI_KEEP_ALIVE=30m
+
+# Unload after every request to free RAM
+TRINAXAI_KEEP_ALIVE=0s
+```
+
+The embedding model has a separate keep-alive (`TRINAXAI_EMBED_KEEP_ALIVE`, default `15m`) because it's called frequently during indexing and search — keeping it loaded prevents sawtooth RAM usage during batch operations.
+
+## Chat Export
+
+From the PWA sidebar, any conversation can be exported:
+
+- **Markdown** — raw `.md` file with the full exchange
+- **PDF** — formatted PDF via the browser's print dialog
+- **Word** — `.docx` export (where supported)
+
+Exports include message timestamps, the engine and model used, and any source citations returned by the RAG engine.

@@ -1,0 +1,611 @@
+---
+title: "TrinaxAI CLI Command Reference"
+sidebarTitle: "Commands"
+description: "Complete reference for all trinaxai CLI commands — ask, chat, index, research, doctor, memory, collections, watch, browse, export, start, and stop."
+---
+
+Every TrinaxAI CLI command is a subcommand of the `trinaxai` binary. Run `trinaxai --help` for a top-level summary or `trinaxai <command> --help` for per-command usage. Each command section below includes the full flag list extracted from the source.
+
+<Note>
+  All commands require the TrinaxAI backend to be running (`trinaxai start`) unless otherwise noted. Use `trinaxai doctor` to verify that services are healthy before running queries.
+</Note>
+
+---
+
+## trinaxai ask
+
+<Accordion title="trinaxai ask — one-shot question">
+
+Send a single question to TrinaxAI and print the answer, then exit. Ideal for scripting, shell aliases, or quick lookups.
+
+**Syntax**
+
+```bash
+trinaxai ask [--session <name>] [--collections <ids>] "your question here"
+```
+
+**Flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `prompt` (positional) | — | The question or prompt text. Multiple words are joined into one string. |
+| `--session <name>` | `default` | Session name used to persist this exchange to `~/.local/share/trinaxai/sessions/<name>.jsonl`. |
+| `--collections <ids>` | — | Comma-separated collection IDs to scope the RAG retrieval, e.g. `--collections myproject,docs`. |
+
+**Examples**
+
+<CodeGroup>
+
+```bash Simple question
+trinaxai ask "What does the index.py file do?"
+```
+
+```bash Scoped to a collection
+trinaxai ask --collections myproject "Where is the authentication logic?"
+```
+
+```bash Named session
+trinaxai ask --session refactor "Summarise the changes in the last PR"
+```
+
+</CodeGroup>
+
+<Tip>
+  `trinaxai ask` always uses the RAG engine so answers are grounded in your indexed code and documents. To force the generative Ollama engine instead, use `trinaxai chat --prompt "..."` with `--engine ollama` set in your config.
+</Tip>
+
+</Accordion>
+
+---
+
+## trinaxai chat
+
+<Accordion title="trinaxai chat — interactive or single-shot chat">
+
+Start a streaming, context-aware chat session. Without `--prompt`, opens a full interactive REPL with multi-turn conversation history and slash commands. With `--prompt`, behaves like a richer version of `ask` with streaming output.
+
+**Syntax**
+
+```bash
+trinaxai chat [--prompt "text"] [--session <name>] [--collections <ids>]
+```
+
+**Flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--prompt <text>` | — | Run a single prompt and exit instead of opening the REPL. |
+| `--session <name>` | `default` | Conversation session name. Messages are appended to the session log on disk. |
+| `--collections <ids>` | — | Comma-separated collection IDs to target for RAG retrieval. |
+
+**Slash Commands (REPL only)**
+
+| Command | Description |
+|---|---|
+| `/help` | Show all slash commands |
+| `/exit` or `/quit` | Exit the chat REPL |
+| `/clear` | Clear in-memory conversation history (session log is kept) |
+| `/model [name]` | Show the current model hint or set a new one for subsequent messages |
+| `/index [path]` | Index a folder directly from within chat (defaults to `.`) |
+| `/status` | Print local service status |
+
+**Examples**
+
+<CodeGroup>
+
+```bash Interactive REPL
+trinaxai chat
+```
+
+```bash Single-shot with streaming
+trinaxai chat --prompt "Explain the RAG pipeline in this project"
+```
+
+```bash Named session scoped to a collection
+trinaxai chat --session design-review --collections architecture
+```
+
+</CodeGroup>
+
+</Accordion>
+
+---
+
+## trinaxai index
+
+<Accordion title="trinaxai index — index a directory into RAG">
+
+Recursively indexes a local directory using AST-aware chunking and stores the result in the local RAG vector store. Indexing is incremental — on subsequent runs only changed files are re-processed.
+
+**Syntax**
+
+```bash
+trinaxai index [path] [--folder <path>] [--collection <id>] [--append]
+```
+
+**Flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `path` (positional) | — | Directory to index. Expanded to an absolute path automatically. |
+| `--folder <path>` | — | Legacy alias for the positional `path` argument. |
+| `--collection <id>` | `default` | Collection ID to store the indexed data in. |
+| `--append` | `false` | Append-only mode: add new files but do not remove chunks for deleted files. |
+
+The indexer is invoked as a subprocess running `index.py` from the TrinaxAI project root. Environment variables such as `TRINAXAI_INDEX_BATCH_SIZE` (from `.env`) apply automatically.
+
+**Examples**
+
+<CodeGroup>
+
+```bash Index the current directory
+trinaxai index .
+```
+
+```bash Index into a named collection
+trinaxai index ~/Documents/myproject --collection myproject
+```
+
+```bash Append new files without re-indexing existing ones
+trinaxai index . --collection myproject --append
+```
+
+</CodeGroup>
+
+<Tip>
+  After indexing, run `trinaxai browse list-files --collection <id>` to confirm that your files were ingested correctly.
+</Tip>
+
+</Accordion>
+
+---
+
+## trinaxai research
+
+<Accordion title="trinaxai research — multi-pass deep research">
+
+Performs a multi-pass deep research query. TrinaxAI breaks the question into sub-questions, retrieves context from the RAG store across multiple passes, and synthesises a comprehensive answer with cited sources.
+
+**Syntax**
+
+```bash
+trinaxai research --query "question" [--collections <ids>] [--depth 1|2|3]
+```
+
+**Flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--query <text>` | *(required)* | The research question. |
+| `--collections <ids>` | — | Comma-separated collection IDs to scope retrieval. |
+| `--depth <1\|2\|3>` | `2` | Number of research passes. Higher depth is more thorough but slower. |
+
+The output includes the generated sub-questions, the final synthesised answer rendered as Markdown, and a list of up to eight source citations showing file path and page number.
+
+**Examples**
+
+<CodeGroup>
+
+```bash Quick single-pass research
+trinaxai research --query "How does the auth middleware work?" --depth 1
+```
+
+```bash Deep multi-pass across two collections
+trinaxai research \
+  --query "How is the embedding pipeline configured end-to-end?" \
+  --collections myproject,docs \
+  --depth 3
+```
+
+</CodeGroup>
+
+</Accordion>
+
+---
+
+## trinaxai doctor
+
+<Accordion title="trinaxai doctor — system health check">
+
+Runs a comprehensive local health check and prints a summary table. Use this after installation or whenever a command fails to narrow down the root cause.
+
+**Syntax**
+
+```bash
+trinaxai doctor
+```
+
+**Checks performed**
+
+| Check | What it verifies |
+|---|---|
+| `Python package` | CLI import works correctly |
+| `Service manager` | `service_manager.py` is present in the project root |
+| `Ollama command` | `ollama` is on `$PATH` |
+| `Services` | Reports running/stopped status via `service_manager.py status` |
+| `RAG API` | HTTP health endpoint (`/health`) is reachable |
+| `Index built` | At least one document has been indexed |
+| `Projects` | Number of indexed projects |
+| `Collections` | Names of the first five collections |
+| `Usage stats` | Total messages and estimated token usage |
+| `Memory summary` | Prints the AI-generated memory summary if one exists |
+
+The command exits with code `0` if the `Python package` and `Service manager` checks both pass, and `1` otherwise.
+
+**Example**
+
+```bash
+trinaxai doctor
+```
+
+```
+┌─────────────────── TrinaxAI doctor ────────────────────┐
+│ check            │ status │ detail                      │
+│ Python package   │ OK     │ CLI import works             │
+│ Service manager  │ OK     │ /home/user/TrinaxAI/...py   │
+│ Ollama command   │ OK     │ /usr/local/bin/ollama        │
+│ Services         │ OK     │ rag_api running | pwa running│
+│ RAG API          │ OK     │ http://localhost:3333        │
+│ Index built      │ OK     │ ready                        │
+│ Projects         │ OK     │ 3                            │
+│ Collections      │ OK     │ default, myproject, docs     │
+└────────────────────────────────────────────────────────┘
+```
+
+</Accordion>
+
+---
+
+## trinaxai memory
+
+<Accordion title="trinaxai memory — manage persistent memory entries">
+
+Creates, lists, and deletes persistent memory entries. Memories are short facts ("remember that the API uses JWT for auth") that TrinaxAI injects into context automatically during chat. They persist across sessions and devices (via the shared backend state).
+
+**Syntax**
+
+```bash
+trinaxai memory <list|add|forget|refresh|summary> [flags]
+```
+
+**Subcommands**
+
+| Subcommand | Description |
+|---|---|
+| `list` | Display all stored memories in a table (id, text, tags, created) |
+| `add` | Add a new memory entry |
+| `forget` | Delete a memory by its ID or unique ID prefix |
+| `refresh` | Re-generate the AI memory summary from all current entries |
+| `summary` | Print the current AI-generated memory summary |
+
+**Flags for `memory add`**
+
+| Flag | Description |
+|---|---|
+| `--text <text>` | Memory text. If omitted, the CLI prompts interactively. |
+| `--tags <tags>` | Comma-separated tags for organisation, e.g. `--tags auth,backend`. |
+
+**Flags for `memory forget`**
+
+| Flag | Description |
+|---|---|
+| `--memory-id <id>` | Full UUID or a unique prefix. If omitted, the CLI prompts interactively. |
+
+**Examples**
+
+<CodeGroup>
+
+```bash List all memories
+trinaxai memory list
+```
+
+```bash Add a tagged memory
+trinaxai memory add \
+  --text "The payments service uses Stripe webhooks, not polling" \
+  --tags payments,backend
+```
+
+```bash Forget a memory by prefix
+trinaxai memory forget --memory-id a3f2
+```
+
+```bash Refresh the summary
+trinaxai memory refresh
+```
+
+```bash View the current summary
+trinaxai memory summary
+```
+
+</CodeGroup>
+
+</Accordion>
+
+---
+
+## trinaxai collections
+
+<Accordion title="trinaxai collections — manage RAG knowledge collections">
+
+Creates, lists, deletes, and switches between RAG collections. Collections are independent vector stores — useful for separating projects, clients, or topics so RAG retrieval stays focused.
+
+**Syntax**
+
+```bash
+trinaxai collections <list|create|delete|use> [flags]
+```
+
+**Subcommands**
+
+| Subcommand | Description |
+|---|---|
+| `list` | Show all collections with their ID, name, and creation time |
+| `create` | Create a new collection |
+| `delete` | Permanently delete a collection and all its indexed data |
+| `use` | Set the active collection used by default for queries |
+
+**Flags for `collections create`**
+
+| Flag | Description |
+|---|---|
+| `--name <name>` | Display name for the collection. If omitted, the CLI prompts interactively. |
+
+**Flags for `collections delete`**
+
+| Flag | Description |
+|---|---|
+| `--collection-id <id>` | ID of the collection to delete. The `default` collection cannot be deleted. A confirmation prompt is shown before deletion. |
+
+**Flags for `collections use`**
+
+| Flag | Description |
+|---|---|
+| `--collection-id <id>` | Collection ID to activate. Saved to the local CLI config. |
+
+**Examples**
+
+<CodeGroup>
+
+```bash List all collections
+trinaxai collections list
+```
+
+```bash Create a new collection
+trinaxai collections create --name "myproject"
+```
+
+```bash Switch the active collection
+trinaxai collections use --collection-id myproject
+```
+
+```bash Delete a collection (with confirmation)
+trinaxai collections delete --collection-id old-project
+```
+
+</CodeGroup>
+
+<Warning>
+  `trinaxai collections delete` removes all indexed data for that collection. This action is irreversible. Re-indexing the source directory is required to restore the data.
+</Warning>
+
+</Accordion>
+
+---
+
+## trinaxai browse
+
+<Accordion title="trinaxai browse — browse indexed collections and files">
+
+Inspects the RAG index — lists collections, files within a collection, or the raw text chunks for a specific file. Useful for verifying that indexing succeeded and for debugging retrieval quality.
+
+**Syntax**
+
+```bash
+trinaxai browse <list-collections|list-files|show-chunks> [flags]
+```
+
+**Subcommands**
+
+| Subcommand | Description |
+|---|---|
+| `list-collections` (or `list`) | Show all available collections |
+| `list-files` | List every indexed file in a collection with chunk count, size, and mtime |
+| `show-chunks` | Display the raw text chunks stored for a given file |
+
+**Flags for `browse list-files`**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--collection <id>` | `default` | Collection to inspect. |
+
+**Flags for `browse show-chunks`**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--collection <id>` | `default` | Collection containing the file. |
+| `--file <path>` | *(required)* | Relative file path as stored in the index. |
+| `--limit <n>` | `50` | Maximum number of chunks to display. |
+
+**Examples**
+
+<CodeGroup>
+
+```bash List all collections
+trinaxai browse list-collections
+```
+
+```bash List files in a collection
+trinaxai browse list-files --collection myproject
+```
+
+```bash Inspect chunks for a specific file
+trinaxai browse show-chunks \
+  --collection myproject \
+  --file src/auth/middleware.py \
+  --limit 10
+```
+
+</CodeGroup>
+
+</Accordion>
+
+---
+
+## trinaxai watch
+
+<Accordion title="trinaxai watch — file watcher daemon control">
+
+Controls the background file watcher daemon. When running, the watcher monitors one or more directories for changes and automatically re-indexes modified files into the RAG store without any manual intervention.
+
+**Syntax**
+
+```bash
+trinaxai watch <start|stop|status> [flags]
+```
+
+**Subcommands**
+
+| Subcommand | Description |
+|---|---|
+| `start` | Start the watcher daemon |
+| `stop` | Stop the watcher daemon |
+| `status` | Show whether the watcher is running and how many events it has processed |
+
+**Flags for `watch start`**
+
+| Flag | Description |
+|---|---|
+| `--paths <dir> [dir ...]` | One or more directories to watch. Multiple values are space-separated. |
+| `--collection <id>` | Restrict auto-reindex to a single collection path. |
+
+**Examples**
+
+<CodeGroup>
+
+```bash Start watching the current directory
+trinaxai watch start --paths .
+```
+
+```bash Watch multiple directories in a specific collection
+trinaxai watch start \
+  --paths ~/projects/backend ~/projects/frontend \
+  --collection myproject
+```
+
+```bash Check watcher status
+trinaxai watch status
+```
+
+```bash Stop the watcher
+trinaxai watch stop
+```
+
+</CodeGroup>
+
+</Accordion>
+
+---
+
+## trinaxai export
+
+<Accordion title="trinaxai export — export a conversation session">
+
+Exports a saved chat session to a Markdown file. Each exchange (user message + assistant reply) is written out in order with role labels and timestamps. Useful for sharing conversations, creating runbooks, or archiving research sessions.
+
+**Syntax**
+
+```bash
+trinaxai export [--session <name>] [--format md] [--output <path>]
+```
+
+**Flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--session <name>` | `default` | Name of the session to export. Sessions are stored at `~/.local/share/trinaxai/sessions/<name>.jsonl`. |
+| `--format <fmt>` | `md` | Output format. Currently only `md` (Markdown) is supported. |
+| `--output <path>` | `./trinaxai-<session>.md` | File path for the exported output. If omitted, the file is written to the current working directory. |
+
+**Examples**
+
+<CodeGroup>
+
+```bash Export the default session
+trinaxai export
+```
+
+```bash Export a named session to a specific path
+trinaxai export --session design-review --output ~/reports/design-review.md
+```
+
+</CodeGroup>
+
+</Accordion>
+
+---
+
+## trinaxai start
+
+<Accordion title="trinaxai start — start all services">
+
+Starts all TrinaxAI local services: the RAG API (FastAPI) and the PWA frontend. Uses the platform's service manager (`service_manager.py`) so the services are also registered for auto-start.
+
+**Syntax**
+
+```bash
+trinaxai start
+```
+
+This command has no additional flags. It runs `service_manager.py start` with a 180-second timeout and streams service manager output directly to the terminal.
+
+**Example**
+
+```bash
+trinaxai start
+# Starting TrinaxAI services...
+# rag_api  → started (pid 12345)
+# pwa      → started (pid 12346)
+```
+
+<Note>
+  On Linux the service manager uses user-level systemd units. On macOS it uses launchctl. On Windows it uses a subprocess supervisor. `trinaxai start` wraps all three transparently.
+</Note>
+
+</Accordion>
+
+---
+
+## trinaxai stop
+
+<Accordion title="trinaxai stop — stop services">
+
+Stops AI services and optionally the PWA frontend. By default it stops only the AI backend (RAG API and Ollama supervisor). Pass `--all` to also take down the PWA.
+
+**Syntax**
+
+```bash
+trinaxai stop [--all] [-y | --yes]
+```
+
+**Flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--all` | `false` | Also stop the PWA frontend (runs `stop-all` instead of `stop-ai`). |
+| `-y` / `--yes` | `false` | Skip the interactive confirmation prompt. |
+
+**Examples**
+
+<CodeGroup>
+
+```bash Stop AI services (with confirmation prompt)
+trinaxai stop
+```
+
+```bash Stop everything including the PWA, no prompt
+trinaxai stop --all --yes
+```
+
+</CodeGroup>
+
+</Accordion>

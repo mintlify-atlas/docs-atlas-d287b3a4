@@ -1,0 +1,183 @@
+---
+title: "RAG and Code Indexing: Semantic Search Over Your Projects"
+sidebarTitle: "RAG & Indexing"
+description: "TrinaxAI indexes your code and files with AST-aware chunking and hybrid vector+BM25 retrieval. Get cited answers from your actual codebase."
+---
+
+TrinaxAI's retrieval-augmented generation (RAG) engine indexes your local projects and answers questions with direct citations to the exact file and chunk it used. It combines vector similarity search with keyword matching, applies optional cross-encoder reranking, and understands your code at the AST level — never slicing a function in half.
+
+## How Hybrid Retrieval Works
+
+Every query runs through a two-stage pipeline before reaching the language model.
+
+<Steps>
+  <Step title="Dual Retrieval">
+    The query is sent simultaneously to two retrievers: a **vector retriever** (bge-m3 embeddings, semantic similarity) and a **BM25 retriever** (exact keyword matching). Each retriever returns `FUSION_CANDIDATES` candidate chunks from the vector store.
+  </Step>
+  <Step title="Reciprocal Rank Fusion">
+    Results from both retrievers are merged using `QueryFusionRetriever` in `reciprocal_rerank` mode. Chunks that rank highly in *both* retrievers — semantically similar *and* keyword-matching — float to the top.
+  </Step>
+  <Step title="Cross-Encoder Reranking (optional)">
+    When `TRINAXAI_RERANK=1` is set, the fused candidates are re-scored by `BAAI/bge-reranker-v2-m3`, a multilingual cross-encoder that measures true relevance between the query and each chunk. This is a big precision boost but requires `pip install -r requirements-rerank.txt` and loads ~2 GB into RAM.
+  </Step>
+  <Step title="Context Injection">
+    The top `SIMILARITY_TOP_K` chunks (3–8 depending on profile and performance mode) are injected into the LLM prompt. Each chunk carries `rel_path`, `project`, and `collection_id` metadata that appears as a source citation in the PWA.
+  </Step>
+</Steps>
+
+<Note>
+  No LLM is loaded during indexing — only the embedding model is active. This keeps RAM usage low and makes indexing fast even on modest hardware.
+</Note>
+
+## Indexing a Directory
+
+<CodeGroup>
+```bash CLI
+# Index the current directory into the default collection
+trinaxai index .
+
+# Index a specific path
+trinaxai index ~/Documents/my-project
+
+# Force a specific collection
+TRINAXAI_COLLECTION_ID=myproject trinaxai index ~/Documents/my-project
+
+# Start a file watcher for continuous auto-reindexing
+trinaxai watch
+```
+
+```bash API (curl)
+# Upload files via the /system/index-upload endpoint (multipart)
+curl -X POST https://localhost:3333/system/index-upload \
+  -H "X-Admin-Token: $TRINAXAI_ADMIN_TOKEN" \
+  -F "label=my-project" \
+  -F "collection_id=default" \
+  -F "files=@src/main.py" \
+  -F "files=@src/utils.py"
+
+# Check the job status
+curl https://localhost:3333/system/index-jobs/<job_id>
+
+# Reload the engine after external index.py run
+curl -X POST https://localhost:3333/system/reload
+```
+</CodeGroup>
+
+When files are uploaded through the PWA's **Settings → Indexing** panel, TrinaxAI uses the `/system/index-upload` endpoint, which copies the files into `local_sources/collections/<id>/` and runs `index.py` as a background subprocess. A live progress indicator polls the job status.
+
+## AST-Aware Chunking
+
+For code files, TrinaxAI uses LlamaIndex's `CodeSplitter`, which parses the AST with `tree-sitter` and splits at function and class boundaries — never mid-statement. For prose, `SentenceSplitter` uses token-based chunking that respects sentence boundaries.
+
+| Splitter | When Used | Config |
+|---|---|---|
+| `CodeSplitter` | Files with a recognised language extension | `CODE_CHUNK_LINES=60`, `CODE_CHUNK_LINES_OVERLAP=12`, `CODE_MAX_CHARS=2000` |
+| `SentenceSplitter` | Prose, config files, and AST fallback | `CHUNK_SIZE=1024`, `CHUNK_OVERLAP=150` |
+
+**Languages with AST support** (from `CODE_LANG_BY_EXT` in `config.py`):
+
+<CardGroup cols={4}>
+  <Card title="Python" icon="python">.py</Card>
+  <Card title="JavaScript" icon="js">.js · .jsx · .cjs · .mjs</Card>
+  <Card title="TypeScript" icon="code">.ts · .tsx</Card>
+  <Card title="HTML / CSS" icon="code">.html · .css · .scss · .sass · .vue · .svelte</Card>
+  <Card title="Shell" icon="terminal">.sh</Card>
+  <Card title="SQL" icon="database">.sql</Card>
+  <Card title="C / C++" icon="code">.c · .h · .cpp</Card>
+  <Card title="C#" icon="code">.cs</Card>
+  <Card title="Java" icon="code">.java</Card>
+  <Card title="Go" icon="code">.go</Card>
+  <Card title="Ruby" icon="code">.rb</Card>
+  <Card title="PHP" icon="code">.php</Card>
+  <Card title="Rust" icon="code">.rs</Card>
+</CardGroup>
+
+Any extension not in this list (JSON, YAML, Markdown, etc.) falls back to `SentenceSplitter`.
+
+## Incremental Indexing
+
+TrinaxAI never re-embeds files that haven't changed. The manifest at `storage/manifest.json` maps each file's `source_key` (formatted as `collection_id:relative_path`) to its `mtime` integer.
+
+On each run, `index.py`:
+
+1. Walks the directory and builds a `new_state` map of `{source_key: mtime}`
+2. Reads `manifest.json` to get `old_state`
+3. Diffs the two maps: `new_files`, `changed`, `deleted`
+4. Removes obsolete nodes from the vector store by `node_id`
+5. Embeds and inserts only the new and changed files
+6. Writes the updated manifest
+
+<Tip>
+  On large codebases, the first full index may take a few minutes. After that, incremental runs that touch only a handful of files complete in seconds.
+</Tip>
+
+## Embedding Presets
+
+Choose your preset with `TRINAXAI_EMBED_PRESET`. The `8gb` profile defaults to `lite`; all other profiles default to `balanced`.
+
+| Preset | Model | Dimensions | Context | Best For |
+|---|---|---|---|---|
+| `balanced` | `bge-m3` | 1024 | 8192 | Multilingual, best quality (default for 16gb+) |
+| `lite` | `nomic-embed-text` | 768 | 2048 | Fast, English-leaning (default for 8gb) |
+| `fast` | `all-minilm` | 384 | 512 | Smallest, English-only, fastest |
+
+<Warning>
+  Changing your embedding preset after indexing requires a full re-index. The new model produces incompatible vector dimensions that cannot be merged with an existing store.
+</Warning>
+
+## Supported File Types
+
+TrinaxAI indexes these extensions (from `REQUIRED_EXTS` in `config.py`):
+
+<Accordion title="Code files">
+  `.py` `.js` `.jsx` `.ts` `.tsx` `.vue` `.svelte` `.html` `.css` `.scss` `.sass` `.c` `.h` `.cpp` `.cs` `.java` `.go` `.rb` `.php` `.rs` `.sh` `.ps1` `.dockerfile` `.sql` `.graphql` `.cjs` `.mjs`
+</Accordion>
+
+<Accordion title="Config and data files">
+  `.json` `.yml` `.yaml` `.toml` `.xml` `.ini` `.csv`
+</Accordion>
+
+<Accordion title="Prose and documents">
+  `.md` `.mdx` `.txt` `.rst` `.pdf` `.docx`
+</Accordion>
+
+Files larger than `TRINAXAI_MAX_FILE_BYTES` (default 3 MB) are skipped with a notice.
+
+## Excluded Patterns
+
+The indexer aggressively prunes directories that contain third-party code, build artifacts, or caches. These directory names are pruned during `os.walk` traversal — the indexer never descends into them at all:
+
+`node_modules` · `.git` · `.svn` · `venv` · `.venv` · `env` · `site-packages` · `__pycache__` · `dist` · `build` · `.next` · `.nuxt` · `out` · `.firebase` · `.vercel` · `coverage` · `.cache` · `.idea` · `.vscode` · `storage` · `logs` · `certs` · `backups`
+
+Minified files, lockfiles, source maps, and log files are also excluded by pattern (e.g. `*.min.js`, `package-lock.json`, `*.map`).
+
+## Storage Layout
+
+```
+storage/
+├── docstore.json      # LlamaIndex document + node store
+├── index_store.json   # FAISS/vector index
+├── manifest.json      # { "collection_id:rel_path": mtime, ... }
+├── collections.json   # Collection metadata (id, name, timestamps)
+├── app_state.json     # Cross-device shared state (tc-* keys)
+└── usage.jsonl        # Per-request usage log (JSONL)
+```
+
+## Configuration Reference
+
+| Variable | Default | Description |
+|---|---|---|
+| `TRINAXAI_INDEX_DIR` | Parent of repo | Root directory to index recursively |
+| `TRINAXAI_CHUNK_SIZE` | `1024` | Token chunk size for prose (SentenceSplitter) |
+| `TRINAXAI_CHUNK_OVERLAP` | `150` | Token overlap between prose chunks |
+| `TRINAXAI_CODE_CHUNK_LINES` | `60` | Line chunk size for code (CodeSplitter) |
+| `TRINAXAI_EMBED_PRESET` | `balanced` | Embedding model preset: `balanced`, `lite`, `fast` |
+| `TRINAXAI_EMBED` | `bge-m3` | Override embedding model name directly |
+| `TRINAXAI_RERANK` | `0` | Set to `1` to enable cross-encoder reranking |
+| `TRINAXAI_RERANK_MODEL` | `BAAI/bge-reranker-v2-m3` | Cross-encoder model identifier |
+| `TRINAXAI_SIMILARITY_TOP_K` | Profile-dependent | Final chunks passed to LLM (3–8) |
+| `TRINAXAI_FUSION_CANDIDATES` | Profile-dependent | Candidates per retriever before fusion (6–32) |
+| `TRINAXAI_INDEX_BATCH_SIZE` | `100` | Files processed per indexing batch |
+| `TRINAXAI_MAX_FILE_BYTES` | `3145728` (3 MB) | Skip files larger than this |
+| `TRINAXAI_COLLECTION_ID` | `default` | Collection to write into when indexing |
+| `TRINAXAI_COLLECTION_NAME` | `General` | Display name for the collection |

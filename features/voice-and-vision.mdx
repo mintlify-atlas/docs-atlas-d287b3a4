@@ -1,0 +1,111 @@
+---
+title: "Voice Mode and Image Analysis in TrinaxAI"
+sidebarTitle: "Voice & Vision"
+description: "TrinaxAI supports speech-to-text input, text-to-speech responses, and local image analysis with qwen2.5-vl — entirely on your device."
+---
+
+TrinaxAI runs voice and vision capabilities entirely on your device. Speech recognition uses the browser's Web Speech API, text-to-speech uses browser TTS, and image analysis runs through a local `qwen2.5-vl` model via Ollama. No audio, no images, and no transcripts are ever sent to a cloud API.
+
+## Voice Mode
+
+Voice mode lets you speak your queries and hear responses read aloud — a natural, hands-free conversation with your local AI.
+
+### How It Works
+
+<Steps>
+  <Step title="Speech Recognition">
+    TrinaxAI uses the browser's **Web Speech API** (`SpeechRecognition`) for speech-to-text. The browser streams audio to its built-in recognition engine (on Chrome/Edge, this is on-device when offline or via Google's speech service when online — see the privacy note below). The recognised text is inserted into the chat input field.
+  </Step>
+  <Step title="Response Synthesis">
+    When a response is received, TrinaxAI uses the browser's **Web Speech Synthesis API** (`SpeechSynthesisUtterance`) to read it aloud. Responses are split at sentence boundaries so playback begins as soon as the first sentence is available, without waiting for the full reply.
+  </Step>
+  <Step title="Interrupt Support">
+    You can interrupt TrinaxAI mid-sentence. Speaking or pressing the voice button while audio is playing cancels the current utterance and starts listening immediately. This keeps conversation flow natural.
+  </Step>
+</Steps>
+
+<Note>
+  The Web Speech API's speech-to-text engine may use an online service (Chrome uses Google's servers when connected). Text-to-speech synthesis is always local to your browser. If full offline voice is required, use the PWA in a browser that supports on-device speech recognition (e.g., Firefox with a local engine).
+</Note>
+
+### Activating Voice Mode in the PWA
+
+1. Open TrinaxAI at `https://localhost:3334`
+2. Click the **microphone icon** (🎤) in the chat input bar
+3. Grant microphone permission when prompted — this permission is remembered for the origin
+4. Speak your question; the transcript appears in the input field as you talk
+5. TrinaxAI sends the message automatically when you pause, or press Enter to send immediately
+6. Toggle the **speaker icon** (🔊) to enable or disable text-to-speech responses
+
+<Tip>
+  Voice mode pairs well with the Ollama engine for quick conversational exchanges. For code questions against your indexed projects, switch to the RAG engine — cited answers are also read aloud.
+</Tip>
+
+## Vision: Image Analysis
+
+TrinaxAI can analyse images and screenshots you attach to the chat. The entire analysis runs locally on your machine through a `qwen2.5-vl` vision-language model served by Ollama.
+
+### Vision Models
+
+Two model sizes are available, configured as Vite build-time environment variables:
+
+| Variable | Default | Use Case |
+|---|---|---|
+| `VITE_TRINAXAI_VISION_MODEL` | `qwen2.5vl:3b` | Default — fast, good quality, runs on 8 GB RAM |
+| `VITE_TRINAXAI_VISION_QUALITY_MODEL` | `qwen2.5vl:7b` | Quality mode — better detail analysis, needs 16 GB+ |
+
+The PWA reads `VITE_TRINAXAI_VISION_QUALITY_MODEL` when you enable **Quality** vision mode in Settings. Both are standard Ollama pull targets.
+
+### Attaching an Image
+
+<Steps>
+  <Step title="Open the Attachment Menu">
+    Click the **paperclip / image icon** (📎) in the chat input bar.
+  </Step>
+  <Step title="Choose an Image">
+    Select any image file from your device (JPEG, PNG, WebP, GIF). You can also paste an image directly from the clipboard.
+  </Step>
+  <Step title="Ask Your Question">
+    Type your question about the image — or leave the text field empty to get a general description. Examples: "What does this error message mean?", "Describe the UI layout", "What's wrong with this chart?"
+  </Step>
+  <Step title="Receive a Local Analysis">
+    TrinaxAI sends the image and your question to `qwen2.5vl:3b` (or `:7b` in quality mode) via Ollama's vision API. The response streams back like any other chat message. No image data leaves your machine.
+  </Step>
+</Steps>
+
+### Image Preprocessing
+
+Before sending large images to the vision model, TrinaxAI preprocesses them in the browser to prevent out-of-memory (OOM) errors on the local Ollama process:
+
+- Images are downscaled if their dimensions exceed a safe threshold
+- Files are re-encoded as JPEG at reduced quality when the file size is large
+- The processed image is base64-encoded and sent in the Ollama API payload
+
+This keeps memory usage predictable even when analysing high-resolution screenshots.
+
+### Skipping Vision During Install
+
+If your machine doesn't have enough RAM for a vision model, skip the download during installation:
+
+```bash
+./install.sh --no-vision
+```
+
+Vision analysis will be unavailable until you pull a vision model manually:
+
+```bash
+ollama pull qwen2.5vl:3b
+```
+
+### Privacy Guarantee
+
+<Note>
+  Everything stays local. Vision requests are sent to Ollama at `http://localhost:11434` — the same endpoint used for text models. No image, screenshot, or analysis result is transmitted to any external server.
+</Note>
+
+## Configuration Reference
+
+| Variable | Default | Description |
+|---|---|---|
+| `VITE_TRINAXAI_VISION_MODEL` | `qwen2.5vl:3b` | Ollama model for standard vision analysis |
+| `VITE_TRINAXAI_VISION_QUALITY_MODEL` | `qwen2.5vl:7b` | Ollama model for high-quality vision analysis |

@@ -1,0 +1,165 @@
+---
+title: "Persistent Memory and Knowledge Collections"
+sidebarTitle: "Memory & Collections"
+description: "TrinaxAI stores persistent facts you share and organizes indexed content into named Collections — separate RAG namespaces for each project."
+---
+
+TrinaxAI provides two complementary ways to give your AI assistant long-term context: **Memory** for facts about you and your preferences, and **Collections** for organising indexed code and documents into named, queryable namespaces.
+
+## Memory
+
+Memory lets you tell TrinaxAI things you want it to remember across conversations. When you say "remember that we use PostgreSQL for production databases" or "remember I prefer TypeScript over JavaScript", TrinaxAI stores that fact locally and injects it into future prompts.
+
+### How Memory Persists
+
+Memory entries are stored in `storage/user_memory.json` as a list of records, each with a unique `id`, the `text` of the fact, a `created_at` Unix timestamp, and optional `tags`. This file lives entirely on your machine.
+
+When you trigger a **summary refresh**, the LLM reads all stored memories and synthesises them into a concise 3–5 sentence summary that gets injected into the system prompt for subsequent chats. The summary is saved to `storage/user_memory_summary.json`.
+
+The `MemoryPanel` component in the PWA also supports free-form **project notes** stored in `localStorage` under the `tc-project-memory` key — a scratchpad that doesn't go through the API.
+
+### Memory API Endpoints
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/v1/memory` | List all stored memory entries |
+| `POST` | `/v1/memory` | Add a new memory entry (`text`, optional `tags`) |
+| `DELETE` | `/v1/memory/{id}` | Remove a specific memory entry by ID |
+| `POST` | `/v1/memory/refresh` | Summarise all memories into a short context note via LLM |
+| `GET` | `/v1/memory/summary` | Read the current LLM-generated memory summary |
+
+All memory endpoints require localhost or a valid admin token (same as other system endpoints).
+
+### Memory CLI
+
+```bash
+# Open the interactive memory manager
+trinaxai memory
+
+# The CLI lists entries, lets you add new ones, and delete by ID
+```
+
+### Memory in the PWA
+
+Open the **Memory** panel from the PWA sidebar or Settings. The panel shows:
+
+- **Project Notes** — a free-form text area stored locally in the browser
+- **Auto Summary** — the LLM-generated summary of your stored facts, with a **Refresh** button to regenerate it
+- **Add Memory** — an input field for text and optional comma-separated tags
+- **Memory List** — all stored entries with timestamps, tags, and a delete button
+
+When you edit or add memories, the PWA dispatches a `tc-memory-updated` event so the `ChatInterface` drops its cached summary and picks up the new version on the next request.
+
+## Collections
+
+Collections are separate RAG namespaces within the same vector store. Each indexed chunk carries a `collection_id` metadata field. When you query with a specific collection active, only chunks from that collection are retrieved — keeping project A's code from contaminating answers about project B.
+
+### Why Use Collections
+
+<CardGroup cols={2}>
+  <Card title="Per-Project Isolation" icon="folder">
+    Index each client project or repository into its own collection. Ask questions about "my-app" without getting answers from "legacy-api".
+  </Card>
+  <Card title="Mixed Queries" icon="layer-group">
+    Pass multiple `collection_id` values in the `collections` param to query several at once — useful for monorepos or related projects.
+  </Card>
+  <Card title="Separate Lifecycles" icon="arrows-rotate">
+    Delete a collection when a project ends. Deletion removes all associated vector nodes from the store and cleans up the manifest entries.
+  </Card>
+  <Card title="Named Contexts" icon="tag">
+    Give collections meaningful names like "Backend API", "Design System", or "Client Docs". The name appears in source citations in the PWA.
+  </Card>
+</CardGroup>
+
+### Creating and Managing Collections
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash
+    # List all collections
+    trinaxai collections
+
+    # Index into a named collection
+    TRINAXAI_COLLECTION_ID=backend \
+    TRINAXAI_COLLECTION_NAME="Backend API" \
+    trinaxai index ~/projects/backend-api
+
+    # Or set in .env:
+    # TRINAXAI_COLLECTION_ID=backend
+    # TRINAXAI_COLLECTION_NAME=Backend API
+    ```
+  </Tab>
+  <Tab title="API">
+    ```bash
+    # List collections
+    curl https://localhost:3333/collections
+
+    # Create a new collection
+    curl -X POST https://localhost:3333/collections \
+      -H "Content-Type: application/json" \
+      -H "X-Admin-Token: $TRINAXAI_ADMIN_TOKEN" \
+      -d '{"name": "Backend API"}'
+
+    # Update a collection name
+    curl -X PATCH https://localhost:3333/collections/backend \
+      -H "Content-Type: application/json" \
+      -H "X-Admin-Token: $TRINAXAI_ADMIN_TOKEN" \
+      -d '{"name": "New Name"}'
+
+    # Delete a collection (removes all its indexed nodes)
+    curl -X DELETE https://localhost:3333/collections/backend \
+      -H "X-Admin-Token: $TRINAXAI_ADMIN_TOKEN"
+    ```
+  </Tab>
+  <Tab title="PWA — KnowledgeBrowser">
+    The **Knowledge Browser** panel (accessible from the sidebar) shows all collections in a left column. Clicking a collection loads its indexed files in the middle column, and clicking a file shows its individual chunks — with full-text search and a copy button on each chunk.
+
+    New collections are created from the Settings → Indexing panel when you upload or index files.
+  </Tab>
+</Tabs>
+
+### Querying Multiple Collections
+
+Pass an array of collection IDs in the `collections` field of the chat request to retrieve across multiple namespaces simultaneously:
+
+```bash
+curl -X POST https://localhost:3333/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": "How does auth work?"}],
+    "stream": false,
+    "collections": ["backend", "auth-service"]
+  }'
+```
+
+When `collections` is omitted or empty, TrinaxAI retrieves from all collections.
+
+### Default Collection
+
+The default collection (`id: "default"`, `name: "General"`) always exists and cannot be deleted. Files indexed without specifying a collection ID go into `default`.
+
+## Cross-Device Sync with App State
+
+TrinaxAI uses an `app_state.json` file (in `storage/`) as a simple key-value store for shared state across devices on the same WiFi. All keys use the `tc-` prefix.
+
+The `/app-state` endpoint lets the PWA on your phone and the PWA on your desktop stay in sync:
+
+```bash
+# Read shared state
+GET /app-state
+
+# Write/merge keys
+PUT /app-state   body: {"values": {"tc-my-key": "value"}}
+
+# Factory-reset state (requires confirmation header)
+DELETE /app-state
+```
+
+This is how collection selections, onboarding completion status, and other preferences propagate to other devices without a cloud service.
+
+## Configuration Reference
+
+| Variable | Default | Description |
+|---|---|---|
+| `TRINAXAI_COLLECTION_ID` | `default` | Collection to use when indexing or querying |
+| `TRINAXAI_COLLECTION_NAME` | `General` | Display name for the active collection |

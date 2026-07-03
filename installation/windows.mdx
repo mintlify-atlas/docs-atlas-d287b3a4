@@ -1,0 +1,272 @@
+---
+title: "Install TrinaxAI on Windows 10 and 11 with PowerShell"
+sidebarTitle: "Windows"
+description: "Install TrinaxAI on Windows using PowerShell. Installs Ollama via winget, configures Python and Node.js, and runs services as background processes."
+---
+
+TrinaxAI runs entirely on your Windows machine — no cloud, no subscriptions, no data leaving your network. The PowerShell installer (`install.ps1`) auto-detects your RAM, writes `.env`, installs **Python**, **Node.js**, and **Git** via `winget` if they are missing, installs **Ollama** using `winget` with a silent-installer fallback, builds the PWA frontend, configures Windows Firewall rules for LAN access, and optionally registers TrinaxAI in the Windows **Startup** folder. Services run as supervised background processes — no separate service manager installation is required.
+
+When the install completes you'll have:
+
+- **Ollama** running at `http://localhost:11434`
+- **RAG API** (FastAPI) at `https://localhost:3333`
+- **PWA** chat interface at `https://localhost:3334`
+
+<Warning>
+  PowerShell's default execution policy blocks unsigned scripts. Run `install.ps1` with the `-ExecutionPolicy Bypass` flag — this applies only to the current PowerShell session and does not permanently change your system policy.
+
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File .\install.ps1
+  ```
+</Warning>
+
+## Install steps
+
+<Steps>
+  <Step title="Open PowerShell">
+    Press `Win + X` and choose **Windows PowerShell** or **Terminal**. You do **not** need to run as Administrator for a basic install — the installer will prompt if elevated rights are needed for firewall rules.
+  </Step>
+
+  <Step title="Clone the repository">
+    <Tabs>
+      <Tab title="PowerShell">
+        ```powershell
+        git clone https://github.com/TrinaxCode/TrinaxAI.git $env:USERPROFILE\trinaxai
+        cd $env:USERPROFILE\trinaxai
+        ```
+      </Tab>
+      <Tab title="Command Prompt">
+        ```cmd
+        git clone https://github.com/TrinaxCode/TrinaxAI.git %USERPROFILE%\trinaxai
+        cd %USERPROFILE%\trinaxai
+        ```
+      </Tab>
+    </Tabs>
+
+    <Note>
+      If Git is not installed yet, the installer will install it via `winget` automatically. You can also download it from [git-scm.com](https://git-scm.com/download/win) and reopen your terminal.
+    </Note>
+  </Step>
+
+  <Step title="Run the installer">
+    ```powershell
+    powershell -ExecutionPolicy Bypass -File .\install.ps1
+    ```
+
+    The installer will:
+
+    1. Detect your RAM and select a hardware profile
+    2. Write `.env` with your auto-detected settings
+    3. Install Python, Git, Node.js, and Ollama via `winget` (with silent-installer fallback for Ollama)
+    4. Create a Python `.venv` and install all packages
+    5. Build the PWA frontend with `npm`
+    6. Generate and trust a local HTTPS certificate
+    7. Add Windows Firewall rules for ports `3333` and `3334` on Private networks
+    8. Prompt to download Ollama models
+    9. Prompt to enable Windows startup autostart
+    10. Optionally start TrinaxAI now
+  </Step>
+
+  <Step title="Open the PWA">
+    ```
+    https://localhost:3334
+    ```
+
+    Accept the local certificate warning on first visit. If you chose to trust it automatically during install, Chrome and Edge will open without a warning.
+  </Step>
+</Steps>
+
+## Installer flags
+
+<Tabs>
+  <Tab title="PowerShell">
+    ```powershell
+    # Fully automatic, no prompts
+    powershell -ExecutionPolicy Bypass -File .\install.ps1 -NonInteractive
+
+    # Skip model downloads
+    powershell -ExecutionPolicy Bypass -File .\install.ps1 -NoModels
+
+    # Skip vision model only
+    powershell -ExecutionPolicy Bypass -File .\install.ps1 -NoVision
+
+    # Do not enable Windows startup
+    powershell -ExecutionPolicy Bypass -File .\install.ps1 -NoAutostart
+
+    # Do not start services at the end
+    powershell -ExecutionPolicy Bypass -File .\install.ps1 -NoStart
+
+    # Enable LAN system-control endpoints
+    powershell -ExecutionPolicy Bypass -File .\install.ps1 -LanSystem
+
+    # Force a hardware profile
+    powershell -ExecutionPolicy Bypass -File .\install.ps1 -Profile 16gb
+    ```
+  </Tab>
+  <Tab title="Combined example">
+    ```powershell
+    # CI-style: auto profile, no models, no prompts
+    powershell -ExecutionPolicy Bypass -File .\install.ps1 -NonInteractive -NoModels -Profile 16gb
+    ```
+  </Tab>
+</Tabs>
+
+**Flag reference**
+
+| Flag | Description |
+|------|-------------|
+| `-Interactive` | Guided install; prompts for optional choices (default) |
+| `-NonInteractive` | Fully automatic — no prompts. Useful for CI/scripts |
+| `-NoModels` | Skip downloading all Ollama models (including vision) |
+| `-NoVision` | Skip vision model download only |
+| `-NoAutostart` | Do not register TrinaxAI in Windows Startup |
+| `-NoStart` | Do not start TrinaxAI at the end of the install |
+| `-Profile` | Override auto-detected profile: `8gb`, `16gb`, `max`, or `ultra` |
+| `-LanSystem` | Enable LAN system-control endpoints and generate an admin token |
+
+**Profile reference**
+
+| Profile | RAM target | Models used |
+|---------|-----------|-------------|
+| `8gb` | ≤ 8 GB | `llama3.2:1b`, `qwen2.5-coder:1.5b`, `nomic-embed-text` |
+| `16gb` | 9–19 GB | `llama3.2:3b`, `qwen2.5-coder:3b`, `bge-m3` |
+| `max` | 20–31 GB | `qwen2.5-coder:7b`, larger context window |
+| `ultra` | ≥ 32 GB | `qwen2.5-coder:14b`, `qwen2.5vl:7b` |
+
+## Installing dependencies manually
+
+If `winget` is unavailable, install each tool manually and reopen your terminal before running the installer:
+
+<Tabs>
+  <Tab title="PowerShell (winget)">
+    ```powershell
+    winget install --id Python.Python.3.12 --silent
+    winget install --id Git.Git --silent
+    winget install --id OpenJS.NodeJS.LTS --silent
+    winget install --id Ollama.Ollama --silent
+    ```
+  </Tab>
+  <Tab title="Manual download">
+    | Tool | Download URL |
+    |------|-------------|
+    | Python 3.12 | [python.org](https://python.org) — check **"Add python.exe to PATH"** |
+    | Git | [git-scm.com](https://git-scm.com/download/win) |
+    | Node.js LTS | [nodejs.org](https://nodejs.org) |
+    | Ollama | [ollama.com/download/windows](https://ollama.com/download/windows) |
+  </Tab>
+</Tabs>
+
+After installing, verify everything is on your `PATH`:
+
+```powershell
+python --version
+git --version
+node --version
+npm --version
+ollama --version
+```
+
+## Service management
+
+Start, stop, and check status using the Python service manager:
+
+<Tabs>
+  <Tab title="PowerShell">
+    ```powershell
+    # Start all services
+    .\.venv\Scripts\python.exe service_manager.py start --base-dir "$PWD"
+
+    # Shut down AI (RAG + Ollama); PWA stays available
+    .\.venv\Scripts\python.exe service_manager.py stop-ai --base-dir "$PWD"
+
+    # Shut down everything
+    .\.venv\Scripts\python.exe service_manager.py stop-all --base-dir "$PWD"
+
+    # Check status
+    .\.venv\Scripts\python.exe service_manager.py status --base-dir "$PWD"
+    ```
+  </Tab>
+  <Tab title="CLI shorthand">
+    ```powershell
+    trinaxai start
+    trinaxai stop
+    ```
+  </Tab>
+</Tabs>
+
+### Autostart on Windows boot
+
+The installer optionally registers a `TrinaxAI.vbs` launcher in the Windows Startup folder so no console window stays visible on login. Manage it with:
+
+```powershell
+# Enable autostart
+.\.venv\Scripts\python.exe service_manager.py enable-autostart --base-dir "$PWD"
+
+# Disable autostart
+.\.venv\Scripts\python.exe service_manager.py disable-autostart --base-dir "$PWD"
+
+# Browse the Startup folder manually
+explorer "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
+```
+
+<Tip>
+  The supervisor keeps the PWA available at all times. If you shut down the AI from the PWA settings or with `stop-ai`, the next Windows startup will **not** restart Ollama/RAG — it respects the state you left it in.
+</Tip>
+
+## Windows Firewall and LAN access
+
+The installer adds inbound rules for TCP ports `3333` and `3334` on **Private** networks when run with Administrator privileges. If the rules weren't applied (non-admin install), add them manually:
+
+```powershell
+# Run PowerShell as Administrator, then:
+New-NetFirewallRule -DisplayName "TrinaxAI RAG API" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3333 -Profile Private
+New-NetFirewallRule -DisplayName "TrinaxAI PWA"     -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3334 -Profile Private
+```
+
+**Accessing from a phone on the same Wi-Fi:** open `https://[YOUR-LAN-IP]:3334` in your phone's browser. Find your Windows LAN IP:
+
+```powershell
+Get-NetIPAddress -AddressFamily IPv4 |
+  Where-Object { $_.IPAddress -match "^(192\.168|10\.|172\.(1[6-9]|2[0-9]|3[0-1]))" } |
+  Select-Object -First 1 IPAddress
+```
+
+<Warning>
+  Do **not** set Firewall rules for **Public** networks. Do **not** expose ports `3333`, `3334`, or `11434` to the internet. For remote access, use a VPN such as Tailscale or WireGuard.
+</Warning>
+
+## Update
+
+Use the native Windows updater. It asks whether to back up first, pull the latest code, update models, change autostart, and restart services. Python and npm dependencies always update automatically:
+
+```powershell
+cd $env:USERPROFILE\trinaxai
+powershell -ExecutionPolicy Bypass -File .\update.ps1
+```
+
+## Uninstall
+
+Use the native Windows uninstaller. It stops services, disables autostart, and asks which generated/runtime files to remove. Your source code is always kept:
+
+```powershell
+cd $env:USERPROFILE\trinaxai
+powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
+```
+
+<Note>
+  RAG index data (`storage\`) and uploaded files (`local_sources\`) are **kept by default**. The uninstaller will ask whether to remove them during the guided flow.
+</Note>
+
+## Port reference
+
+| Port | Service | Notes |
+|------|---------|-------|
+| `3333` | RAG API (FastAPI) | Backend — binds to `0.0.0.0` |
+| `3334` | PWA (chat interface) | Open `https://localhost:3334` in your browser |
+| `11434` | Ollama | Local model engine |
+
+**LAN system control is disabled by default.** Sensitive endpoints require either a localhost caller or a valid `TRINAXAI_ADMIN_TOKEN`. Enable it during install with `-LanSystem`, or set `TRINAXAI_ALLOW_LAN_SYSTEM=1` and `TRINAXAI_ADMIN_TOKEN` in `.env` manually.
+
+## Note on WSL2
+
+You can run TrinaxAI inside WSL2 using the [Linux guide](/installation/linux), but the most direct path on Windows is PowerShell + `install.ps1`. If you use WSL2, keep in mind that networking, firewall rules, and file-system access behave differently between the Windows and Linux layers.

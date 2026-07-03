@@ -1,0 +1,253 @@
+---
+title: "Collections API: Manage RAG Knowledge Namespaces"
+sidebarTitle: "Collections"
+description: "CRUD endpoints for TrinaxAI collections — named RAG namespaces for organizing indexed content by project, client, or topic."
+---
+
+Collections are named RAG namespaces that let you partition your indexed content into separate, searchable buckets — for example, one collection per client, project, or topic. Every TrinaxAI instance always has at least one collection: **General** (`id: "default"`), which cannot be deleted. Collection IDs are automatically slugified via `sanitize_collection_id` when created.
+
+<Note>
+  `GET /collections` is open (no auth required). All write operations — `POST`, `PATCH`, and `DELETE` — require authorization via localhost/LAN access or an `X-Admin-Token` header.
+</Note>
+
+---
+
+## GET /collections
+
+List all RAG collections. This endpoint is always open and does not require authorization. The default `"General"` collection is always present.
+
+### Response
+
+<ResponseField name="ok" type="boolean">
+  Always `true` on success.
+</ResponseField>
+<ResponseField name="collections" type="array">
+  Ordered list of collection objects.
+
+  <Expandable title="Collection object">
+    <ResponseField name="id" type="string">
+      Slugified collection identifier (e.g. `"default"`, `"my-project"`). Used in all other API calls that accept a `collection_id`.
+    </ResponseField>
+    <ResponseField name="name" type="string">
+      Human-readable display name (e.g. `"General"`, `"My Project"`). Max 80 characters.
+    </ResponseField>
+    <ResponseField name="created_at" type="number">
+      Unix timestamp when the collection was created.
+    </ResponseField>
+    <ResponseField name="updated_at" type="number">
+      Unix timestamp when the collection was last modified.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```bash
+curl http://localhost:3333/collections
+```
+
+```json Response
+{
+  "ok": true,
+  "collections": [
+    {
+      "id": "default",
+      "name": "General",
+      "created_at": 1718000000.0,
+      "updated_at": 1718000000.0
+    },
+    {
+      "id": "my-project",
+      "name": "My Project",
+      "created_at": 1718100000.0,
+      "updated_at": 1718200000.0
+    }
+  ]
+}
+```
+
+---
+
+## POST /collections
+
+Create a new collection. The `name` is slugified to generate a unique `id`. If the slug is already taken, a numeric suffix is appended (e.g. `"my-project-2"`).
+
+<Note>
+  Requires authorization.
+</Note>
+
+### Request body
+
+<ParamField body="name" type="string" required>
+  Human-readable display name for the new collection. Truncated to 80 characters. The collection ID is derived by slugifying this name via `sanitize_collection_id`.
+</ParamField>
+
+### Response
+
+<ResponseField name="ok" type="boolean">Always `true` on success.</ResponseField>
+<ResponseField name="collection" type="object">
+  The newly created collection object with `id`, `name`, `created_at`, and `updated_at`.
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:3333/collections \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: your-token" \
+  -d '{"name": "My Project"}'
+```
+
+```json Response
+{
+  "ok": true,
+  "collection": {
+    "id": "my-project",
+    "name": "My Project",
+    "created_at": 1718100000.0,
+    "updated_at": 1718100000.0
+  }
+}
+```
+
+---
+
+## PATCH /collections/{collection_id}
+
+Rename an existing collection. Only the display `name` can be changed — the `id` (slug) is immutable after creation.
+
+<Note>
+  Requires authorization.
+</Note>
+
+### Path parameters
+
+<ParamField path="collection_id" type="string" required>
+  The slug ID of the collection to rename (e.g. `"my-project"`).
+</ParamField>
+
+### Request body
+
+<ParamField body="name" type="string" required>
+  The new display name. Truncated to 80 characters.
+</ParamField>
+
+### Response
+
+<ResponseField name="ok" type="boolean">Always `true` on success.</ResponseField>
+<ResponseField name="collection" type="object">
+  The updated collection object with the new `name` and refreshed `updated_at`.
+</ResponseField>
+
+### Example
+
+```bash
+curl -X PATCH http://localhost:3333/collections/my-project \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: your-token" \
+  -d '{"name": "New Name"}'
+```
+
+```json Response
+{
+  "ok": true,
+  "collection": {
+    "id": "my-project",
+    "name": "New Name",
+    "created_at": 1718100000.0,
+    "updated_at": 1718300000.0
+  }
+}
+```
+
+---
+
+## DELETE /collections/{collection_id}
+
+Delete a collection and permanently remove all of its indexed chunks from the vector store. The in-memory retriever is rebuilt automatically after deletion.
+
+<Warning>
+  This operation is **irreversible**. All indexed content in the collection is deleted from the LlamaIndex docstore and the on-disk manifest. You will need to re-upload and re-index to restore it. The `"default"` collection cannot be deleted.
+</Warning>
+
+<Note>
+  Requires authorization.
+</Note>
+
+### Path parameters
+
+<ParamField path="collection_id" type="string" required>
+  The slug ID of the collection to delete. Must not be `"default"`.
+</ParamField>
+
+### Response
+
+<ResponseField name="ok" type="boolean">Always `true` on success.</ResponseField>
+<ResponseField name="deleted_nodes" type="integer">
+  Number of index chunks (nodes) that were removed from the vector store.
+</ResponseField>
+
+### Example
+
+```bash
+curl -X DELETE http://localhost:3333/collections/my-project \
+  -H "X-Admin-Token: your-token"
+```
+
+```json Response
+{
+  "ok": true,
+  "deleted_nodes": 312
+}
+```
+
+---
+
+## POST /documents/extract
+
+Extract plain text from a PDF, DOCX, or text-based file for **temporary analysis only** — the content is not indexed or persisted. Useful for on-the-fly document inspection in the PWA.
+
+<Tip>
+  Supported formats: `.pdf` (via pypdf, with optional OCR fallback when `TRINAXAI_OCR=1`), `.docx` (via docx2txt), `.txt`, `.md`, `.mdx`, `.rst`, `.csv`, `.json`, `.xml`, `.yml`, `.yaml`, `.toml`, `.ini`, `.log`. Maximum upload size is **15 MB** (configurable via `TRINAXAI_DOC_EXTRACT_MAX_BYTES`). Text is truncated at **120,000 characters** (configurable via `TRINAXAI_DOC_EXTRACT_MAX_CHARS`).
+</Tip>
+
+### Request
+
+`multipart/form-data` with a single `file` field.
+
+<ParamField body="file" type="file" required>
+  The document to extract text from. Must be one of the supported formats listed above.
+</ParamField>
+
+### Response
+
+<ResponseField name="ok" type="boolean">Always `true` on success.</ResponseField>
+<ResponseField name="name" type="string">
+  The original filename of the uploaded document.
+</ResponseField>
+<ResponseField name="text" type="string">
+  The extracted plain text. Truncated to `DOC_EXTRACT_MAX_CHARS` (default 120,000) if the document is very long.
+</ResponseField>
+<ResponseField name="chars" type="integer">
+  Character count of the (possibly truncated) returned text.
+</ResponseField>
+<ResponseField name="truncated" type="boolean">
+  `true` if the extracted text exceeded the character limit and was cut off.
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:3333/documents/extract \
+  -F "file=@/path/to/report.pdf"
+```
+
+```json Response
+{
+  "ok": true,
+  "name": "report.pdf",
+  "text": "[Page 1]\nQuarterly Report Q2 2024\n\nThis report covers...",
+  "chars": 45200,
+  "truncated": false
+}
+```

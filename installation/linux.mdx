@@ -1,0 +1,250 @@
+---
+title: "Install TrinaxAI on Linux (Ubuntu, Debian, Fedora, Arch)"
+sidebarTitle: "Linux"
+description: "Install TrinaxAI on Linux with a single bash command. Supports Ubuntu, Debian, Fedora, and Arch. Uses systemd for service management."
+---
+
+TrinaxAI installs as a fully local AI assistant — no cloud, no subscriptions, no data leaving your machine. The installer auto-detects your RAM, writes a `.env` configuration, installs Python and Node.js dependencies, builds the PWA frontend, and optionally pulls Ollama models and registers a user-level **systemd** service for autostart on boot. It supports Ubuntu, Debian, Fedora, Arch, openSUSE, and Alpine.
+
+When the install completes you'll have:
+
+- **Ollama** running at `http://localhost:11434`
+- **RAG API** (FastAPI) at `https://localhost:3333`
+- **PWA** chat interface at `https://localhost:3334`
+
+## One-command install
+
+Paste this into any terminal. The script clones the repo to `~/trinaxai` if it doesn't already exist, then runs the guided installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TrinaxCode/TrinaxAI/main/install.sh | bash
+```
+
+<Note>
+  **Security tip:** Review the script before running it.
+
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/TrinaxCode/TrinaxAI/main/install.sh | less
+  ```
+
+  Alternatively, clone the repository and run the installer locally — see the manual steps below.
+</Note>
+
+## Manual install
+
+<Steps>
+  <Step title="Install system dependencies">
+    Choose the command that matches your distribution.
+
+    <CodeGroup>
+      ```bash Ubuntu / Debian
+      sudo apt-get update
+      sudo apt-get install -y python3 python3-pip python3-venv curl git unzip nodejs npm
+      ```
+
+      ```bash Fedora
+      sudo dnf install -y python3 python3-pip nodejs npm curl git unzip
+      ```
+
+      ```bash Arch
+      sudo pacman -Sy --needed python python-pip curl git unzip nodejs npm
+      ```
+
+      ```bash openSUSE
+      sudo zypper install python3 python3-pip curl git unzip nodejs npm
+      ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/TrinaxCode/TrinaxAI.git ~/trinaxai
+    cd ~/trinaxai
+    ```
+  </Step>
+
+  <Step title="Create the Python virtual environment">
+    ```bash
+    python3 -m venv .venv
+    source .venv/bin/activate
+    python -m pip install --upgrade pip
+    python -m pip install -r requirements.txt
+    pip install -e .
+    ```
+  </Step>
+
+  <Step title="Install and build the PWA">
+    ```bash
+    cd chat-pwa
+    npm install
+    npm run build
+    cd ..
+    ```
+  </Step>
+
+  <Step title="Install Ollama">
+    ```bash
+    curl -fsSL https://ollama.com/install.sh | sh
+    ```
+
+    Verify it responds:
+
+    ```bash
+    ollama --version
+    ollama list
+    ```
+  </Step>
+
+  <Step title="Run the installer">
+    ```bash
+    chmod +x install.sh
+    ./install.sh
+    ```
+
+    The installer creates `.env` with your auto-detected profile, generates a local HTTPS certificate, pulls any requested Ollama models, and optionally enables autostart.
+  </Step>
+</Steps>
+
+## Installer flags
+
+Pass any of these flags to `install.sh` to skip prompts or override defaults:
+
+| Flag | Description |
+|------|-------------|
+| `--interactive` | Guided install; prompts for optional choices (default) |
+| `--non-interactive` | Fully automatic install — no prompts. Useful for CI/scripts |
+| `--no-models` | Skip downloading all Ollama models (including vision) |
+| `--no-vision` | Skip vision model download only |
+| `--no-autostart` | Do not enable boot auto-start |
+| `--no-start` | Do not start TrinaxAI at the end of the install |
+| `--profile 8gb\|16gb\|max\|ultra` | Override the auto-detected hardware profile |
+| `--lan-system` | Enable LAN system-control endpoints and generate an admin token |
+
+**Profile reference**
+
+| Profile | RAM target | Models used |
+|---------|-----------|-------------|
+| `8gb` | ≤ 8 GB | `llama3.2:1b`, `qwen2.5-coder:1.5b`, `nomic-embed-text` |
+| `16gb` | 9–19 GB | `llama3.2:3b`, `qwen2.5-coder:3b`, `bge-m3` |
+| `max` | 20–31 GB | `qwen2.5-coder:7b`, `bge-m3` |
+| `ultra` | ≥ 32 GB | `qwen2.5-coder:14b`, `qwen2.5vl:7b`, `bge-m3` |
+
+Example: CI install with no prompts, no models, forced profile:
+
+```bash
+./install.sh --non-interactive --no-models --profile 16gb
+```
+
+## Service management
+
+### Start and stop
+
+```bash
+# Start all services
+./startup_ai.sh
+
+# Shut down only AI (RAG + Ollama); PWA stays available
+./shutdown_ai.sh
+
+# Shut down everything
+.venv/bin/python service_manager.py stop-all --base-dir "$PWD"
+
+# Check status
+.venv/bin/python service_manager.py status --base-dir "$PWD"
+```
+
+You can also use the CLI shorthand:
+
+```bash
+trinaxai start
+trinaxai stop
+```
+
+### Systemd autostart
+
+The installer enables a **user-level** systemd service automatically. You can manage it directly:
+
+```bash
+# Enable autostart
+.venv/bin/python service_manager.py enable-autostart --base-dir "$PWD"
+
+# Disable autostart
+.venv/bin/python service_manager.py disable-autostart --base-dir "$PWD"
+```
+
+If you ran `setup_trinaxai.sh` (the advanced system-level option), use `systemctl` directly:
+
+```bash
+# Service status
+systemctl status ollama
+systemctl status ai-rag
+systemctl status trinaxai-frontend
+
+# Tail logs via journald
+journalctl -u ai-rag -f
+journalctl -u trinaxai-frontend -f
+```
+
+<Tip>
+  The supervisor keeps the PWA available at all times. If you shut down the AI engine with `./shutdown_ai.sh` or from the PWA settings, the next reboot will **not** restart Ollama/RAG automatically — it respects whatever state you left it in.
+</Tip>
+
+## Update
+
+From the repository root, run the guided updater. It asks whether to back up first, pull the latest code, update models, change autostart, and restart services. Python and npm dependencies always update automatically:
+
+```bash
+cd ~/trinaxai
+./update.sh
+```
+
+Common non-interactive flags:
+
+```bash
+./update.sh --non-interactive    # Full update, no prompts, safe defaults
+./update.sh --no-backup          # Skip the pre-update backup
+./update.sh --models             # Also pull/update configured Ollama models
+./update.sh --no-pull            # Skip git pull (update deps only)
+./update.sh --restart            # Restart services after update
+```
+
+## Uninstall
+
+The guided uninstaller stops services, disables autostart, and asks which generated/runtime files to remove. Your source code is always kept:
+
+```bash
+cd ~/trinaxai
+./uninstall.sh
+```
+
+To also remove Ollama models during uninstall:
+
+```bash
+./uninstall.sh --remove-models
+```
+
+<Note>
+  RAG index data (`storage/`) and uploaded files (`local_sources/`) are **kept by default**. Pass `--remove-data` to delete them.
+</Note>
+
+## Port reference
+
+| Port | Service | Notes |
+|------|---------|-------|
+| `3333` | RAG API (FastAPI) | Backend — binds to `0.0.0.0` for LAN access |
+| `3334` | PWA (chat interface) | Open `https://localhost:3334` in your browser |
+| `11434` | Ollama | Binds to `127.0.0.1` by default |
+
+**Accessing from a phone or tablet:** open `https://[YOUR-LAN-IP]:3334` from any device on the same Wi-Fi network. Your browser will show a certificate warning for the self-signed local cert — accept it to proceed.
+
+Find your LAN IP:
+
+```bash
+hostname -I
+```
+
+<Warning>
+  Do **not** expose ports `3333`, `3334`, or `11434` to the internet. For remote access, use a VPN such as Tailscale or WireGuard. See [SECURITY.md](https://github.com/TrinaxCode/TrinaxAI/blob/main/SECURITY.md) for the full threat model.
+</Warning>
+
+**LAN system control is disabled by default.** Sensitive endpoints (shutdown, reload, collection management) require either a localhost caller or a valid `TRINAXAI_ADMIN_TOKEN`. Enable LAN system control during install with `--lan-system`, or set `TRINAXAI_ALLOW_LAN_SYSTEM=1` and `TRINAXAI_ADMIN_TOKEN` in `.env` manually.

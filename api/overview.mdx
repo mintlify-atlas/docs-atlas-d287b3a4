@@ -1,0 +1,180 @@
+---
+title: "TrinaxAI RAG API Overview"
+sidebarTitle: "Overview"
+description: "The TrinaxAI RAG API is a FastAPI server on port 3333. It provides OpenAI-compatible chat, collections, memory, indexing, and system control endpoints."
+---
+
+The TrinaxAI RAG API is a [FastAPI](https://fastapi.tiangolo.com/) server that powers the PWA, CLI, and any third-party integrations. It runs locally on port **3333** and exposes an OpenAI-compatible chat endpoint alongside dedicated endpoints for RAG collections, persistent memory, file indexing, file watching, and system control. By default the server binds to `0.0.0.0:3333` so the PWA is reachable from phones and tablets on the same network; you can restrict it to `127.0.0.1` via the `TRINAXAI_HOST` environment variable.
+
+**Base URL**
+
+| Scheme | Base URL | Notes |
+|---|---|---|
+| HTTPS (default) | `https://localhost:3333` | Self-signed certificate generated at install time |
+| HTTP | `http://localhost:3333` | Available when `TRINAXAI_RAG_HTTPS=0` |
+
+For LAN access from another device on the same network substitute your machine's local IP, e.g. `https://192.168.1.42:3333`.
+
+<Note>
+  TrinaxAI uses a **self-signed TLS certificate** by default. Browsers and `curl` will reject it unless you either trust the generated cert or pass the `--insecure` / `-k` flag. Set `TRINAXAI_TLS_VERIFY=0` in `.env` (already the default) to let internal Python clients skip certificate verification for localhost traffic.
+</Note>
+
+For authentication details — including the two-tier model that separates open chat endpoints from protected system endpoints — see the [Authentication](/api/authentication) page.
+
+---
+
+## Endpoint Summary
+
+All endpoints return `application/json` unless stated otherwise. File upload endpoints accept `multipart/form-data`.
+
+### Chat & Retrieval
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v1/chat/completions` | OpenAI-compatible RAG chat. Supports SSE streaming via `"stream": true`. |
+| `POST` | `/v1/research` | Multi-pass deep research with sub-question decomposition and LLM synthesis. |
+
+### Knowledge Browser
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/v1/sources` | List indexed source files with chunk counts and a preview snippet. |
+| `GET` | `/v1/sources/{collection}/{file}/chunks` | List individual chunks for a specific file within a collection. |
+
+### Usage & Stats
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v1/usage` | Record a usage event from frontend-only flows (e.g. direct Ollama chat). |
+| `GET` | `/v1/stats` | Aggregate local usage statistics from `storage/usage.jsonl`. |
+
+### Memory
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/v1/memory` | List all persistent memory entries. |
+| `POST` | `/v1/memory` | Append a new memory entry. |
+| `DELETE` | `/v1/memory/{id}` | Delete a memory entry by ID. |
+| `POST` | `/v1/memory/refresh` | Re-summarise all memory entries into a short context-injectable note. |
+| `GET` | `/v1/memory/summary` | Read the current LLM-generated memory summary. |
+
+### File Watcher
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v1/watch/start` | Start the filesystem watcher. Re-runs `index.py` when files change. Requires `watchdog`. |
+| `POST` | `/v1/watch/stop` | Stop the running watcher. |
+| `GET` | `/v1/watch/status` | Report watcher state: running, watched paths, event count. |
+
+### Health & Telemetry
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/health` | System overview: index status, available models, active collections, features. |
+| `GET` | `/resources` | Local RAM / VRAM telemetry. Requires `psutil`. |
+
+### App State
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/app-state` | Read shared configuration from `storage/app_state.json`. |
+| `PUT` | `/app-state` | Save settings, preferences, and chat state. |
+| `DELETE` | `/app-state` | Factory-reset shared state to host defaults. |
+
+### Document Extraction
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/documents/extract` | Extract text from PDF, DOCX, or plain-text files for temporary analysis (not indexed). Accepts `multipart/form-data`. |
+
+### Collections
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/collections` | List all RAG collections. |
+| `POST` | `/collections` | Create a new collection. |
+| `PATCH` | `/collections/{id}` | Rename a collection. |
+| `DELETE` | `/collections/{id}` | Delete a collection and all its indexed chunks. |
+
+### Indexing
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/system/index-upload` | Upload a folder for indexing via browser file picker. Accepts `multipart/form-data`. |
+| `GET` | `/system/index-jobs/{job_id}` | Poll an index job's status, progress, and ETA. |
+| `POST` | `/system/index-jobs/{job_id}/cancel` | Cancel a running index job. |
+
+### System Control
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/system/reload` | Hot-reload the RAG index from `storage/` without restarting the process. |
+| `POST` | `/system/shutdown` | Shut down Ollama and the RAG API. |
+| `POST` | `/system/startup` | Start Ollama and the RAG API. |
+| `POST` | `/system/stop-all` | Stop all TrinaxAI services immediately. |
+| `POST` | `/system/self-test` | Run automated health checks: Ollama, embeddings, RAG query. |
+
+---
+
+## SSE Streaming
+
+Chat completions support server-sent events (SSE) when `"stream": true` is included in the request body. The response `Content-Type` is `text/event-stream`. Each event is a JSON-encoded `data:` line; the stream ends with `data: [DONE]`.
+
+```
+data: {"trinaxai":{"model":"qwen2.5-coder:3b","project":"MyApp"}}
+data: {"choices":[{"delta":{"content":"The auth module"}}]}
+data: {"choices":[{"delta":{"content":" handles JWT validation..."}}]}
+data: {"trinaxai_sources":[{"file":"app/auth.py","snippet":"...","score":0.89}]}
+data: [DONE]
+```
+
+Non-streaming requests (default: `"stream": false`) return a single JSON object conforming to the OpenAI chat completion schema, with an extra `trinaxai` key containing the resolved model, project, and source citations.
+
+---
+
+## Content Types
+
+| Situation | Content-Type |
+|---|---|
+| All JSON endpoints | `application/json` |
+| File uploads (`/system/index-upload`, `/documents/extract`) | `multipart/form-data` |
+| SSE streaming responses | `text/event-stream` |
+
+---
+
+## Rate Limiting
+
+The API enforces a **rolling rate limit** to protect the local Ollama process.
+
+| Parameter | Value |
+|---|---|
+| Limit | **30 requests per minute** per IP address |
+| Window | 60-second rolling |
+| Scope | Chat completions and system endpoints |
+| Response when exceeded | `HTTP 429 Too Many Requests` |
+
+You can adjust the defaults via environment variables:
+
+```bash
+TRINAXAI_RATE_LIMIT_PER_MINUTE=30   # requests per window
+TRINAXAI_RATE_LIMIT_WINDOW_SECONDS=60
+```
+
+---
+
+## Error Codes
+
+| HTTP Status | Meaning |
+|---|---|
+| `200` | Success |
+| `400` | Bad request — missing parameters or invalid data |
+| `401` | Unauthorized — system endpoint called without a valid token |
+| `404` | Not found — collection, job, or memory entry does not exist |
+| `429` | Rate limited — 30 req/min per IP exceeded |
+| `500` | Internal server error |
+| `501` | Not implemented — optional dependency missing (e.g. `watchdog`, `pypdf`) |
+| `503` | Service unavailable — Ollama is unreachable or the index is not loaded |
+
+<Tip>
+  If you receive a `503` on `/v1/chat/completions`, check that Ollama is running (`ollama ps`) and that the index has been built (`python index.py`, then `POST /system/reload`).
+</Tip>

@@ -1,0 +1,89 @@
+---
+title: "TrinaxAI CLI: Terminal-Native AI Workflows"
+sidebarTitle: "Overview"
+description: "The trinaxai CLI lets you ask questions, chat, index code, run research, and manage memory from your terminal. Installed via pip as a Python package."
+---
+
+The TrinaxAI CLI brings every capability of the PWA into your terminal. Ask one-shot questions, run an interactive REPL, index entire project directories for semantic code search, and manage memory and collections — all without leaving your shell. Because the CLI talks directly to the same FastAPI backend (`localhost:3333`) that powers the PWA, there is no separate setup: configure once, use everywhere.
+
+The CLI is distributed as a standard Python package and is installed with `pip install -e .` from the repo root. It targets Python 3.10+ and has two runtime dependencies: `httpx` for HTTP and `rich` for terminal output.
+
+## Installation
+
+```bash
+# Clone the repo (if you haven't already)
+git clone https://github.com/TrinaxCode/TrinaxAI.git
+cd TrinaxAI
+
+# Install the CLI in editable mode
+pip install -e .
+
+# Verify the install
+trinaxai --version
+trinaxai doctor
+```
+
+<Note>
+  Running `pip install -e .` inside a virtual environment (`.venv`) is recommended so the CLI's dependencies don't conflict with system Python packages. The one-command `install.sh` script does this automatically.
+</Note>
+
+## Quick Commands Overview
+
+| Command | Description |
+|---|---|
+| `trinaxai` | Open the interactive REPL (defaults to `chat`) |
+| `trinaxai ask "..."` | Send one question and print the answer, then exit |
+| `trinaxai chat` | Start an interactive streaming chat session |
+| `trinaxai index <path>` | Index a directory into the local RAG store |
+| `trinaxai browse` | Browse indexed collections, files, and chunks |
+| `trinaxai doctor` | Run a full system health check |
+| `trinaxai start` | Start all TrinaxAI local services |
+| `trinaxai stop` | Stop AI services (optionally including the PWA) |
+| `trinaxai watch` | Control the file watcher daemon for auto-reindex |
+| `trinaxai research "..."` | Multi-pass deep research on a question |
+| `trinaxai export` | Export a saved chat session to Markdown |
+| `trinaxai memory` | Manage persistent memory entries |
+| `trinaxai collections` | List or manage RAG knowledge collections |
+| `trinaxai --engine rag` | Force RAG (context-aware) engine for a query |
+| `trinaxai --engine ollama` | Force Ollama (generative) engine for a query |
+
+## Global Flags
+
+These flags apply to every command and are placed before the subcommand name:
+
+| Flag | Description |
+|---|---|
+| `--api-url <URL>` | Override the RAG API base URL for this invocation |
+| `--insecure` | Disable TLS certificate verification (useful for custom certs) |
+| `--config <path>` | Path to a config TOML file (overrides `$TRINAXAI_CONFIG` and XDG search) |
+| `--no-color` | Disable ANSI colour output |
+| `--verbose` / `-v` | Enable DEBUG-level logging to stderr |
+| `--version` | Print the CLI version and exit |
+
+<Tip>
+  `--engine` is a per-query flag available on `ask` and `chat` (via `/engine` slash command inside the REPL). To change the default engine for all commands, set `engine = "rag"` or `engine = "ollama"` in `~/.config/trinaxai/config.toml`.
+</Tip>
+
+## Same Backend as the PWA
+
+The CLI and the PWA share the same FastAPI backend. Every query, indexed document, memory entry, and collection is visible from both interfaces. When you index a directory with `trinaxai index .`, the results are immediately available in the chat at `https://localhost:3334`. No separate configuration is required.
+
+```
+┌──────────────────────────────────────────┐
+│              Your Device                 │
+│  ┌──────────┐  ┌─────────────────────┐   │
+│  │ PWA (React)│  │ CLI (trinaxai)     │   │
+│  │ :3334     │  │ pip install -e .    │   │
+│  └─────┬─────┘  └──────────┬──────────┘  │
+│        │                   │              │
+│  ┌─────┴───────────────────┴──────────┐  │
+│  │     RAG API (FastAPI) :3333        │  │
+│  │  LlamaIndex • bge-m3 • BM25       │  │
+│  └─────┬──────────────────────────────┘  │
+│        │                                  │
+│  ┌─────┴──────┐                           │
+│  │  Ollama    │  qwen2.5 • llama3.2      │
+│  │  :11434    │                           │
+│  └────────────┘                           │
+└──────────────────────────────────────────┘
+```

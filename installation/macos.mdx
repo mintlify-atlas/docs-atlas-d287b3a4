@@ -1,0 +1,268 @@
+---
+title: "Install TrinaxAI on macOS (Intel and Apple Silicon)"
+sidebarTitle: "macOS"
+description: "Install TrinaxAI on macOS with one command. Supports Intel and Apple Silicon Macs. Uses launchctl for service management."
+---
+
+TrinaxAI runs entirely on your Mac — no cloud, no subscriptions, no data leaving your network. The installer detects whether you're on **Apple Silicon** (M1/M2/M3/M4) or **Intel**, auto-sizes a hardware profile based on your RAM, writes `.env`, installs dependencies via **Homebrew**, builds the PWA frontend, and registers a **LaunchAgent** in `~/Library/LaunchAgents/` for autostart. Apple Silicon gets Metal-accelerated inference through Ollama automatically; Intel Macs fall back to CPU.
+
+When the install completes you'll have:
+
+- **Ollama** running at `http://localhost:11434`
+- **RAG API** (FastAPI) at `https://localhost:3333`
+- **PWA** chat interface at `https://localhost:3334`
+
+## One-command install
+
+Paste this into Terminal. The script clones the repo to `~/trinaxai` if it doesn't already exist, then runs the guided installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TrinaxCode/TrinaxAI/main/install.sh | bash
+```
+
+<Note>
+  **Security tip:** Review the script before running it.
+
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/TrinaxCode/TrinaxAI/main/install.sh | less
+  ```
+
+  macOS may also block scripts downloaded from the internet via Gatekeeper. Cloning the repository and running locally avoids any quarantine issues — see the manual steps below.
+</Note>
+
+## Manual install
+
+<Steps>
+  <Step title="Install Xcode Command Line Tools">
+    Required by Homebrew and for building native Python/Node modules:
+
+    ```bash
+    xcode-select --install
+    ```
+
+    A system dialog will appear. Click **Install** and wait for it to finish.
+  </Step>
+
+  <Step title="Install Homebrew">
+    If you don't have Homebrew yet:
+
+    ```bash
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    ```
+
+    On Apple Silicon, follow the post-install instructions to add Homebrew to your `PATH` (usually `eval "$(/opt/homebrew/bin/brew shellenv)"`).
+  </Step>
+
+  <Step title="Install dependencies">
+    ```bash
+    brew install python@3.12 node git curl ollama
+    ```
+
+    <Note>
+      You can also install Ollama from the [official macOS app](https://ollama.com/download/mac) and keep it running in the menu bar instead of using the Homebrew formula.
+    </Note>
+  </Step>
+
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/TrinaxCode/TrinaxAI.git ~/trinaxai
+    cd ~/trinaxai
+    ```
+  </Step>
+
+  <Step title="Create the Python virtual environment">
+    ```bash
+    python3 -m venv .venv
+    source .venv/bin/activate
+    python -m pip install --upgrade pip
+    python -m pip install -r requirements.txt
+    pip install -e .
+    ```
+  </Step>
+
+  <Step title="Install and build the PWA">
+    ```bash
+    cd chat-pwa
+    npm install
+    npm run build
+    cd ..
+    ```
+  </Step>
+
+  <Step title="Run the installer">
+    ```bash
+    bash install.sh
+    ```
+
+    The installer creates `.env`, generates a local HTTPS certificate (and attempts to add it to your login keychain automatically), pulls any requested Ollama models, and optionally enables LaunchAgent autostart.
+  </Step>
+</Steps>
+
+## Installer flags
+
+Pass any of these flags to `install.sh` to skip prompts or override defaults:
+
+| Flag | Description |
+|------|-------------|
+| `--interactive` | Guided install; prompts for optional choices (default) |
+| `--non-interactive` | Fully automatic install — no prompts. Useful for CI/scripts |
+| `--no-models` | Skip downloading all Ollama models (including vision) |
+| `--no-vision` | Skip vision model download only |
+| `--no-autostart` | Do not enable boot auto-start |
+| `--no-start` | Do not start TrinaxAI at the end of the install |
+| `--profile 8gb\|16gb\|max\|ultra` | Override the auto-detected hardware profile |
+| `--lan-system` | Enable LAN system-control endpoints and generate an admin token |
+
+**Profile reference**
+
+| Profile | RAM target | Notes |
+|---------|-----------|-------|
+| `8gb` | ≤ 8 GB | `llama3.2:1b`, `qwen2.5-coder:1.5b`, `nomic-embed-text` |
+| `16gb` | 9–19 GB | `llama3.2:3b`, `qwen2.5-coder:3b`, `bge-m3` |
+| `max` | 20–31 GB | `qwen2.5-coder:7b`, larger context window |
+| `ultra` | ≥ 32 GB | `qwen2.5-coder:14b`, `qwen2.5vl:7b` — ideal for M2/M3 Max/Ultra |
+
+Example: CI install with no prompts:
+
+```bash
+bash install.sh --non-interactive --no-models --profile 16gb
+```
+
+## Gatekeeper and quarantine
+
+macOS quarantines files downloaded from the internet. If you see *"cannot be opened because it is from an unidentified developer"* or a quarantine error, clear the attribute:
+
+```bash
+xattr -d com.apple.quarantine install.sh
+```
+
+Cloning with `git clone` does **not** trigger quarantine — only files downloaded via a browser or `curl -O` are affected.
+
+## Trusting the local HTTPS certificate
+
+TrinaxAI generates a self-signed certificate for `localhost` and your LAN IP. The installer tries to add it to your **login keychain** automatically via `security add-trusted-cert`. If it doesn't auto-trust:
+
+1. Open **Keychain Access** → select the **login** keychain.
+2. Import `~/trinaxai/chat-pwa/certs/trinaxai-local.crt`.
+3. Double-click the certificate → expand **Trust** → set **"When using this certificate"** to **Always Trust**.
+4. Close and enter your password to save.
+
+After trusting, **Safari** and **Chrome** will open `https://localhost:3334` without a warning.
+
+<Tip>
+  On **iPhone and iPad**, navigate to `https://[YOUR-LAN-IP]:3334` in Safari, tap the warning, and choose **Visit Website**. To permanently trust the cert, AirDrop the `.crt` file to your device and install it via **Settings → General → VPN & Device Management**, then enable full trust under **Settings → General → About → Certificate Trust Settings**.
+</Tip>
+
+## Service management
+
+### Start and stop
+
+```bash
+# Start all services
+./startup_ai.sh
+
+# Shut down only AI (RAG + Ollama); PWA stays available
+./shutdown_ai.sh
+
+# Shut down everything
+.venv/bin/python service_manager.py stop-all --base-dir "$PWD"
+
+# Check status
+.venv/bin/python service_manager.py status --base-dir "$PWD"
+```
+
+You can also use the CLI shorthand:
+
+```bash
+trinaxai start
+trinaxai stop
+```
+
+### LaunchAgent autostart
+
+TrinaxAI registers a LaunchAgent in `~/Library/LaunchAgents/com.trinaxcode.trinaxai.plist`. Manage it with:
+
+```bash
+# Enable autostart
+.venv/bin/python service_manager.py enable-autostart --base-dir "$PWD"
+
+# Disable autostart
+.venv/bin/python service_manager.py disable-autostart --base-dir "$PWD"
+
+# Verify the agent is loaded
+launchctl list | grep trinax
+```
+
+Tail service logs:
+
+```bash
+tail -f logs/supervisor.log
+tail -f logs/rag_api.log
+tail -f logs/frontend.log
+```
+
+<Tip>
+  The supervisor keeps the PWA available at all times. If you shut down the AI with `./shutdown_ai.sh` or from the PWA settings, the next boot will **not** restart Ollama/RAG — it respects the state you left it in.
+</Tip>
+
+## Update
+
+Run the guided updater from the repository root. It asks whether to back up first, pull the latest code, update models, change autostart, and restart services. Python and npm dependencies always update automatically:
+
+```bash
+cd ~/trinaxai
+./update.sh
+```
+
+Common non-interactive flags:
+
+```bash
+./update.sh --non-interactive    # Full update, no prompts, safe defaults
+./update.sh --no-backup          # Skip the pre-update backup
+./update.sh --models             # Also pull/update configured Ollama models
+./update.sh --restart            # Restart services after update
+```
+
+## Uninstall
+
+The guided uninstaller stops services, removes the LaunchAgent, and asks which generated/runtime files to remove. Your source code is always kept:
+
+```bash
+cd ~/trinaxai
+./uninstall.sh
+```
+
+To also remove Ollama models during uninstall:
+
+```bash
+./uninstall.sh --remove-models
+```
+
+<Note>
+  RAG index data (`storage/`) and uploaded files (`local_sources/`) are **kept by default**. Pass `--remove-data` to delete them.
+</Note>
+
+## Port reference
+
+| Port | Service | Notes |
+|------|---------|-------|
+| `3333` | RAG API (FastAPI) | Backend — binds to `0.0.0.0` for LAN access |
+| `3334` | PWA (chat interface) | Open `https://localhost:3334` in your browser |
+| `11434` | Ollama | Binds to `127.0.0.1` by default |
+
+**Accessing from a phone or tablet:** open `https://[YOUR-LAN-IP]:3334` from any device on the same Wi-Fi. Find your Mac's LAN IP:
+
+```bash
+ipconfig getifaddr en0    # Wi-Fi on most Macs
+ipconfig getifaddr en1    # Ethernet or secondary interface
+```
+
+<Warning>
+  Do **not** expose ports `3333`, `3334`, or `11434` to the internet. For remote access, use a VPN such as Tailscale or WireGuard. See [SECURITY.md](https://github.com/TrinaxCode/TrinaxAI/blob/main/SECURITY.md) for the full threat model.
+</Warning>
+
+**LAN system control is disabled by default.** Sensitive endpoints require either a localhost caller or a valid `TRINAXAI_ADMIN_TOKEN`. Enable it during install with `--lan-system`, or set `TRINAXAI_ALLOW_LAN_SYSTEM=1` and `TRINAXAI_ADMIN_TOKEN` in `.env` manually.
+
+## macOS folder access permissions
+
+When you first index a folder such as **Documents**, **Desktop**, or **Downloads**, macOS will show a permission prompt. Click **Allow** to let TrinaxAI read those locations. You can review and change these permissions at any time in **System Settings → Privacy & Security → Files and Folders**.

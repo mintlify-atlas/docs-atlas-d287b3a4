@@ -1,0 +1,440 @@
+---
+title: "Chat Completions and Research API Endpoints"
+sidebarTitle: "Chat"
+description: "POST /v1/chat/completions — OpenAI-compatible RAG chat with SSE streaming. POST /v1/research — deep multi-pass research with sub-question decomposition."
+---
+
+TrinaxAI exposes two primary query endpoints. `/v1/chat/completions` is an OpenAI-compatible interface that retrieves context from your indexed documents and streams a grounded response via SSE. `/v1/research` performs deep multi-pass retrieval with sub-question decomposition for complex analytical queries. Both endpoints are rate-limited to **30 requests per minute per IP** and are open to trusted CORS origins by default.
+
+---
+
+## POST /v1/chat/completions
+
+OpenAI-compatible RAG chat with hybrid retrieval (vector + BM25 fusion) and optional SSE streaming. The auto-router selects the best local model for each query — a coder model for code questions, a general model for prose, and the largest available model for complex multi-part questions.
+
+<Note>
+  This endpoint is open to trusted CORS origins (localhost ports 3334/3335 and private LAN IPs) without a token. System-level authorization is not required for chat.
+</Note>
+
+### Request body
+
+<ParamField body="model" type="string" default="auto">
+  Ollama model name to use, or `"auto"` to let the built-in router choose the best model for the query. The router maps trivial queries → fast model, code queries → `qwen2.5-coder`, complex queries → the deepest available model (up to 14b on ultra profile).
+</ParamField>
+
+<ParamField body="messages" type="array" required>
+  Array of conversation turns. Each element must have `role` (`"user"`, `"assistant"`, or `"system"`) and `content` (string). Up to four previous turns are injected into the retrieval prompt for follow-up understanding.
+
+  <Expandable title="Message object">
+    <ParamField body="role" type="string" required>
+      One of `"user"`, `"assistant"`, or `"system"`.
+    </ParamField>
+    <ParamField body="content" type="string" required>
+      The text content of the message.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="stream" type="boolean" default="true">
+  Set to `true` for Server-Sent Events (SSE) streaming. Set to `false` to receive a single JSON response after the full answer is generated.
+</ParamField>
+
+<ParamField body="collections" type="array">
+  Optional list of collection IDs to restrict retrieval to. When omitted, the retriever searches across all indexed collections. Collection IDs are slugified strings (e.g. `"my-project"`, `"default"`).
+</ParamField>
+
+### Streaming response (SSE)
+
+When `stream: true`, the server returns `Content-Type: text/event-stream`. Each `data:` line is a JSON object. The stream follows this sequence:
+
+```
+data: {"trinaxai":{"model":"qwen2.5-coder:7b","project":"Insider"}}
+data: {"choices":[{"delta":{"content":"The auth module..."}}]}
+data: {"choices":[{"delta":{"content":" uses JWT tokens"}}]}
+data: {"trinaxai_sources":[{"file":"auth.py","snippet":"def verify_token(tok...","score":0.89}]}
+data: [DONE]
+```
+
+The first event carries model routing metadata. Subsequent `choices` events stream individual tokens. The `trinaxai_sources` event is emitted once, just before `[DONE]`, containing the grounding sources used for the response.
+
+#### `trinaxai_sources` fields
+
+<ResponseField name="trinaxai_sources" type="array">
+  Array of source objects used to ground the answer.
+
+  <Expandable title="Source object">
+    <ResponseField name="file" type="string">
+      Relative path of the source file within the indexed project (e.g. `"app/auth.py"`).
+    </ResponseField>
+    <ResponseField name="project" type="string">
+      Project name derived from the top-level folder of the indexed path.
+    </ResponseField>
+    <ResponseField name="collection_id" type="string">
+      ID of the collection this source belongs to.
+    </ResponseField>
+    <ResponseField name="collection" type="string">
+      Human-readable name of the collection.
+    </ResponseField>
+    <ResponseField name="page" type="string | null">
+      Page label for PDF sources; `null` for code files.
+    </ResponseField>
+    <ResponseField name="snippet" type="string">
+      Up to 280 characters of the most relevant chunk text.
+    </ResponseField>
+    <ResponseField name="score" type="number | null">
+      Retrieval relevance score (reciprocal rank fusion). Higher is better. `null` if unavailable.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Non-streaming response
+
+When `stream: false`, the server returns a single JSON object after the complete answer is generated.
+
+<ResponseField name="id" type="string">
+  Unique completion ID (e.g. `"chatcmpl-1718123456"`).
+</ResponseField>
+<ResponseField name="object" type="string">
+  Always `"chat.completion"`.
+</ResponseField>
+<ResponseField name="created" type="integer">
+  Unix timestamp of when the response was generated.
+</ResponseField>
+<ResponseField name="model" type="string">
+  The model that was actually used (resolved from `"auto"` if applicable).
+</ResponseField>
+<ResponseField name="choices" type="array">
+  Array with a single element containing the assistant message.
+
+  <Expandable title="Choice object">
+    <ResponseField name="index" type="integer">Always `0`.</ResponseField>
+    <ResponseField name="message" type="object">
+      <Expandable title="Message">
+        <ResponseField name="role" type="string">Always `"assistant"`.</ResponseField>
+        <ResponseField name="content" type="string">The full generated response.</ResponseField>
+      </Expandable>
+    </ResponseField>
+    <ResponseField name="finish_reason" type="string">Always `"stop"` on success.</ResponseField>
+  </Expandable>
+</ResponseField>
+<ResponseField name="trinaxai" type="object">
+  TrinaxAI-specific metadata appended to the standard OpenAI response shape.
+
+  <Expandable title="trinaxai object">
+    <ResponseField name="model" type="string">Model used for this response.</ResponseField>
+    <ResponseField name="project" type="string | null">Auto-detected project name from the query, if any.</ResponseField>
+    <ResponseField name="sources" type="array">Same source objects as `trinaxai_sources` in the streaming response.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+```bash Streaming (SSE)
+curl -N -X POST http://localhost:3333/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "auto",
+    "messages": [
+      {"role": "user", "content": "How does the auth module work?"}
+    ],
+    "stream": true,
+    "collections": ["my-project"]
+  }'
+```
+
+```bash Non-streaming
+curl -X POST http://localhost:3333/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen2.5-coder:7b",
+    "messages": [
+      {"role": "user", "content": "How does the auth module work?"}
+    ],
+    "stream": false
+  }'
+```
+</CodeGroup>
+
+```json Non-streaming response
+{
+  "id": "chatcmpl-1718123456",
+  "object": "chat.completion",
+  "created": 1718123456,
+  "model": "qwen2.5-coder:7b",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "The auth module uses JWT tokens for stateless session management..."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "trinaxai": {
+    "model": "qwen2.5-coder:7b",
+    "project": "Insider",
+    "sources": [
+      {
+        "file": "app/auth.py",
+        "project": "Insider",
+        "collection_id": "my-project",
+        "collection": "My Project",
+        "page": null,
+        "snippet": "def verify_token(tok): ...",
+        "score": 0.89
+      }
+    ]
+  },
+  "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+}
+```
+
+---
+
+## POST /v1/research
+
+Deep multi-pass research with sub-question decomposition. The LLM first breaks your query into 2–4 focused sub-questions, runs a separate retrieval pass for each, deduplicates the collected chunks, and synthesizes a comprehensive grounded answer with inline citations.
+
+<Tip>
+  Use `/v1/research` when you need a thorough comparative or analytical answer — e.g. "Compare authentication patterns across the project" or "Explain how data flows from the frontend to the database." For simple factual look-ups, `/v1/chat/completions` is faster.
+</Tip>
+
+<Note>
+  This endpoint requires authorization (localhost/LAN or `X-Admin-Token` header). It is not rate-limited the same way as chat, but it is significantly more compute-intensive.
+</Note>
+
+### Request body
+
+<ParamField body="query" type="string" required>
+  The full research question. Longer, more specific questions produce better sub-question decomposition.
+</ParamField>
+
+<ParamField body="depth" type="integer" default="2">
+  Research depth. `1` skips sub-question decomposition and runs a single retrieval pass. `2` (default) decomposes into 2–4 sub-questions. `3` adds an extra cross-pass using the original query to fill any remaining gaps. Clamped to `[1, 3]`.
+</ParamField>
+
+<ParamField body="collections" type="array">
+  Optional list of collection IDs to restrict retrieval to. When omitted, all collections are searched.
+</ParamField>
+
+<ParamField body="model" type="string">
+  Override the model used for both decomposition and synthesis. Defaults to `TRINAXAI_LLM` from config (the code model for the current profile).
+</ParamField>
+
+### Response
+
+<ResponseField name="answer" type="string">
+  Comprehensive synthesized answer with inline citations in `[n]` format referencing the source list.
+</ResponseField>
+<ResponseField name="sub_questions" type="array">
+  The sub-questions that were generated and used to drive retrieval passes. Array of strings.
+</ResponseField>
+<ResponseField name="sources" type="array">
+  All unique source chunks collected across all retrieval passes.
+
+  <Expandable title="Source object">
+    <ResponseField name="file" type="string">Relative path of the source file.</ResponseField>
+    <ResponseField name="project" type="string">Project name.</ResponseField>
+    <ResponseField name="collection_id" type="string">Collection ID.</ResponseField>
+    <ResponseField name="collection" type="string">Collection display name.</ResponseField>
+    <ResponseField name="page" type="string | null">Page label for PDF sources.</ResponseField>
+    <ResponseField name="snippet" type="string">Up to 280 characters of chunk text.</ResponseField>
+    <ResponseField name="score" type="number | null">Retrieval score.</ResponseField>
+  </Expandable>
+</ResponseField>
+<ResponseField name="passes" type="integer">
+  Number of retrieval passes executed (equals `len(sub_questions)` plus one for `depth >= 3`).
+</ResponseField>
+<ResponseField name="model" type="string">
+  Model used for decomposition and synthesis.
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:3333/v1/research \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Compare authentication patterns across the project",
+    "depth": 2,
+    "collections": ["default"]
+  }'
+```
+
+```json Response
+{
+  "answer": "The project uses two authentication patterns: [1] JWT-based stateless auth in `auth.py` and [2] session cookies in `legacy_auth.py`...",
+  "sub_questions": [
+    "What authentication methods are used in the codebase?",
+    "How are tokens validated and sessions managed?"
+  ],
+  "sources": [
+    {
+      "file": "app/auth.py",
+      "project": "Insider",
+      "collection_id": "default",
+      "collection": "General",
+      "page": null,
+      "snippet": "def verify_token(tok): payload = jwt.decode(tok, SECRET_KEY, ...",
+      "score": 0.923
+    }
+  ],
+  "passes": 2,
+  "model": "qwen2.5-coder:7b"
+}
+```
+
+---
+
+## GET /v1/sources
+
+List all indexed files in a collection, with chunk counts, byte size, last-modified time, and a short preview snippet. Results are cached for performance (default: 30 seconds in fast mode).
+
+<Note>
+  This endpoint requires authorization (localhost/LAN or `X-Admin-Token`).
+</Note>
+
+### Query parameters
+
+<ParamField query="collection" type="string">
+  Collection ID to list sources for. Defaults to `"default"` when omitted.
+</ParamField>
+
+### Response
+
+<ResponseField name="collection" type="string">
+  The resolved collection ID that was queried.
+</ResponseField>
+<ResponseField name="sources" type="array">
+  List of source file entries, sorted by descending chunk count then filename.
+
+  <Expandable title="Source entry">
+    <ResponseField name="file" type="string">Relative path of the file within the collection.</ResponseField>
+    <ResponseField name="chunks" type="integer">Number of index chunks for this file.</ResponseField>
+    <ResponseField name="size" type="integer">Total byte size of all chunk text for this file.</ResponseField>
+    <ResponseField name="mtime" type="number">Unix timestamp of the most recently modified chunk.</ResponseField>
+    <ResponseField name="preview" type="string">First 200 characters of the file's first chunk.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```bash
+curl "http://localhost:3333/v1/sources?collection=default" \
+  -H "X-Admin-Token: your-token"
+```
+
+```json Response
+{
+  "collection": "default",
+  "sources": [
+    {
+      "file": "app/auth.py",
+      "chunks": 45,
+      "size": 38420,
+      "mtime": 1718000000.0,
+      "preview": "import jwt\nfrom functools import wraps\n\nSECRET_KEY = os.getenv('SECRET_KEY')"
+    },
+    {
+      "file": "docs/architecture.md",
+      "chunks": 12,
+      "size": 9800,
+      "mtime": 1717900000.0,
+      "preview": "# Architecture Overview\n\nTrinaxAI is a local-first AI assistant..."
+    }
+  ]
+}
+```
+
+---
+
+## GET /v1/sources/\{collection\}/\{file:path\}/chunks
+
+Retrieve individual indexed chunks for a specific file within a collection. Supports pagination and optional text search filtering.
+
+<Note>
+  This endpoint requires authorization (localhost/LAN or `X-Admin-Token`).
+</Note>
+
+### Path parameters
+
+<ParamField path="collection" type="string" required>
+  The collection ID containing the file.
+</ParamField>
+
+<ParamField path="file" type="string" required>
+  The relative file path within the collection (URL-encoded). For example: `app/auth.py` or `docs/notes/architecture.md`.
+</ParamField>
+
+### Query parameters
+
+<ParamField query="limit" type="integer" default="50">
+  Maximum number of chunks to return. Clamped to `[1, 500]`.
+</ParamField>
+
+<ParamField query="offset" type="integer" default="0">
+  Number of chunks to skip for pagination.
+</ParamField>
+
+<ParamField query="q" type="string">
+  Optional case-insensitive substring filter. When provided, only chunks whose text contains this string are returned, and `total` reflects the filtered count.
+</ParamField>
+
+### Response
+
+<ResponseField name="collection" type="string">Collection ID.</ResponseField>
+<ResponseField name="file" type="string">The file path that was queried.</ResponseField>
+<ResponseField name="total" type="integer">Total number of matching chunks (after optional `q` filter).</ResponseField>
+<ResponseField name="query" type="string">The `q` filter value used, or empty string.</ResponseField>
+<ResponseField name="chunks" type="array">
+  The paginated list of chunks.
+
+  <Expandable title="Chunk object">
+    <ResponseField name="id" type="string">Internal node ID of the chunk.</ResponseField>
+    <ResponseField name="text" type="string">Full text content of the chunk.</ResponseField>
+    <ResponseField name="metadata" type="object">
+      <Expandable title="Metadata fields">
+        <ResponseField name="rel_path" type="string">Relative file path.</ResponseField>
+        <ResponseField name="project" type="string">Project name.</ResponseField>
+        <ResponseField name="collection_id" type="string">Collection ID.</ResponseField>
+        <ResponseField name="collection_name" type="string">Collection display name.</ResponseField>
+        <ResponseField name="page_label" type="string | null">Page label (PDFs only).</ResponseField>
+        <ResponseField name="page" type="integer | null">Page number (PDFs only).</ResponseField>
+      </Expandable>
+    </ResponseField>
+    <ResponseField name="score" type="number | null">Retrieval score if available, else `null`.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```bash
+curl "http://localhost:3333/v1/sources/default/app%2Fauth.py/chunks?limit=5&q=jwt" \
+  -H "X-Admin-Token: your-token"
+```
+
+```json Response
+{
+  "collection": "default",
+  "file": "app/auth.py",
+  "total": 3,
+  "query": "jwt",
+  "chunks": [
+    {
+      "id": "a1b2c3d4e5f6",
+      "text": "import jwt\nfrom functools import wraps\n\ndef verify_token(tok):\n    payload = jwt.decode(tok, SECRET_KEY, algorithms=['HS256'])\n    return payload",
+      "metadata": {
+        "rel_path": "app/auth.py",
+        "project": "Insider",
+        "collection_id": "default",
+        "collection_name": "General",
+        "page_label": null,
+        "page": null
+      },
+      "score": null
+    }
+  ]
+}
+```

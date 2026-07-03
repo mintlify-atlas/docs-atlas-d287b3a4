@@ -1,0 +1,291 @@
+---
+title: "Contributing to TrinaxAI: Setup, Conventions, and Workflow"
+sidebarTitle: "Contributing"
+description: "Set up TrinaxAI for local development, follow Python and TypeScript conventions, and submit a pull request. Full instructions for backend and frontend."
+---
+
+TrinaxAI is an open-source project and contributions are welcome in all forms — bug reports, documentation improvements, translations, and code. This page walks through everything you need to get a working development environment, understand the project conventions, and submit a pull request.
+
+## Prerequisites
+
+Before you begin, make sure you have the following installed:
+
+<CardGroup cols={3}>
+  <Card title="Python 3.10+" icon="python">
+    Required for the backend, CLI, and all scripts. Check with `python3 --version`.
+  </Card>
+  <Card title="Node.js 18+" icon="node">
+    Required for the React PWA frontend. Check with `node --version`.
+  </Card>
+  <Card title="Ollama" icon="robot">
+    The local model runtime. Download from [ollama.com](https://ollama.com) and confirm with `ollama --version`.
+  </Card>
+</CardGroup>
+
+## Development Setup
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/TrinaxCode/TrinaxAI.git
+    cd TrinaxAI
+    ```
+  </Step>
+
+  <Step title="Create and activate a Python virtual environment">
+    ```bash
+    python3 -m venv .venv
+    source .venv/bin/activate   # Linux / macOS
+    # .venv\Scripts\activate    # Windows PowerShell
+    ```
+  </Step>
+
+  <Step title="Install Python dependencies">
+    ```bash
+    pip install -r requirements.txt
+    ```
+  </Step>
+
+  <Step title="Install the optional reranker (recommended)">
+    The cross-encoder reranker (`bge-reranker-v2-m3`) significantly improves RAG precision. It requires roughly 2 GB of RAM but is optional.
+
+    ```bash
+    pip install -r requirements-rerank.txt
+    ```
+
+    Once installed, enable it in `.env` with `TRINAXAI_RERANK=1`.
+  </Step>
+
+  <Step title="Copy .env.example to .env">
+    ```bash
+    cp .env.example .env
+    ```
+
+    Open `.env` and adjust any values for your hardware. Key variables:
+
+    ```bash
+    TRINAXAI_PROFILE=16gb          # 8gb | 16gb | max | ultra
+    TRINAXAI_EMBED=bge-m3          # Embedding model
+    TRINAXAI_RERANK=0              # 1 to enable the cross-encoder reranker
+    TRINAXAI_ALLOW_LAN_SYSTEM=0   # Keep 0 for local-only dev
+    ```
+  </Step>
+
+  <Step title="Start the backend">
+    ```bash
+    python rag_api.py
+    ```
+
+    The API will be available at `https://localhost:3333`. For live-reload during development:
+
+    ```bash
+    python -c "import uvicorn; uvicorn.run('rag_api:app', host='0.0.0.0', port=3333, reload=True)"
+    ```
+  </Step>
+
+  <Step title="Start the PWA frontend">
+    In a second terminal:
+
+    ```bash
+    cd chat-pwa
+    npm install
+    npm run dev
+    ```
+
+    The PWA will be served at `https://localhost:3334`.
+  </Step>
+
+  <Step title="Install the CLI in editable mode">
+    In a third terminal (with the venv active):
+
+    ```bash
+    pip install -e .
+    trinaxai doctor
+    ```
+
+    Editable install means changes to `trinaxai_cli/` are reflected immediately without reinstalling.
+  </Step>
+</Steps>
+
+## Project Structure
+
+```
+.
+├── config.py              # Central configuration (models, profiles, chunking)
+├── rag_api.py             # FastAPI backend (RAG, memory, collections, watcher)
+├── index.py               # Document indexer (AST-aware, incremental)
+├── trinaxai_cli/          # Terminal interface (modular, subcommands)
+├── trinaxai_cli.py        # Legacy standalone CLI (deprecated)
+├── service_manager.py     # Cross-platform service supervisor
+├── test_system.py         # Automated health checks
+│
+├── chat-pwa/              # React PWA frontend
+│   ├── src/components/    # 18 React components
+│   ├── src/lib/           # API layer, config, shared state, user profile
+│   ├── src/hooks/         # useChatHistory, useStreamChat, useZenMode
+│   ├── src/i18n/          # Spanish/English translations (~250 keys)
+│   └── vite.config.ts     # Build config, PWA plugin, API proxy
+│
+├── scripts/               # Release tooling (public_readiness.py)
+├── docs/                  # Documentation (API ref, architecture, dev guide)
+├── storage/               # Persisted indexes, manifest, collections
+├── certs/                 # Self-signed HTTPS certs for local dev
+└── .github/               # CI workflows, PR template, issue templates
+```
+
+## Coding Conventions
+
+### Python
+
+<CardGroup cols={1}>
+  <Card title="Python style rules" icon="code">
+    - Use `pathlib.Path` for all new file-path code (existing `os.path` may remain)
+    - Import order: **stdlib → third-party → local**
+    - Use type hints — encouraged throughout, enforced where it matters for clarity
+    - Docstrings in Google or NumPy style; either Spanish or English (the project is bilingual)
+    - **Never use bare `except Exception: pass`** — at minimum log the exception with `print` or a logger
+  </Card>
+</CardGroup>
+
+```python
+# ✅ Correct — typed, pathlib, logged exception
+from pathlib import Path
+from typing import Optional
+
+def read_manifest(path: Path) -> Optional[dict]:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"[TrinaxAI] Could not read manifest: {exc}")
+        return None
+```
+
+```python
+# ❌ Incorrect — bare except, os.path, no types
+def read_manifest(path):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except:
+        pass
+```
+
+### TypeScript (chat-pwa)
+
+<CardGroup cols={1}>
+  <Card title="TypeScript style rules" icon="brackets-curly">
+    - **Strict TypeScript** — `strict: true` is set in `tsconfig.json`; do not bypass it
+    - Use `const` for all non-reassigned bindings
+    - Components are **functional with hooks** — no class components (except `ErrorBoundary` which already exists)
+    - **i18n first** — add every new user-visible string to `chat-pwa/src/i18n/translations.ts` in both `es` and `en` before using it in a component
+    - CSS via **Tailwind utility classes** only; custom CSS goes in `index.css`
+  </Card>
+</CardGroup>
+
+```typescript
+// ✅ Correct — functional, typed props, i18n
+const { t } = useI18n();
+
+const MyButton: React.FC<{ onClick: () => void }> = ({ onClick }) => (
+  <button onClick={onClick} className="px-4 py-2 bg-blue-600 text-white rounded">
+    {t('myButton.label')}
+  </button>
+);
+```
+
+### Shell Scripts
+
+All shell scripts in the repository follow these conventions:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  echo "Usage: $0 [--option]"
+  echo ""
+  echo "Environment variables:"
+  echo "  TRINAXAI_PROFILE   Hardware profile (8gb|16gb|max|ultra)"
+  exit 0
+}
+
+[[ "${1:-}" == "--help" ]] && usage
+```
+
+- Always include `#!/usr/bin/env bash` as the shebang
+- Always set `set -euo pipefail` — catches errors, unset variables, and pipe failures
+- Include a `usage()` function and `--help` flag
+- Document every environment variable the script reads
+
+## Adding a New CLI Command
+
+The CLI lives in `trinaxai_cli/commands/`. Each subcommand is its own module. To add a new command:
+
+<Steps>
+  <Step title="Create the command module">
+    Add a new file at `trinaxai_cli/commands/mycommand.py`. Follow the pattern of an existing command — each command exposes a `run(args)` function and uses `httpx` for API calls and `rich` for terminal output.
+  </Step>
+
+  <Step title="Register it in the CLI package">
+    Open `trinaxai_cli/__init__.py` (or the router module) and register your command in the subcommand dispatch table.
+  </Step>
+
+  <Step title="Update the help text">
+    Ensure `trinaxai --help` lists the new command with a short description.
+  </Step>
+
+  <Step title="Add i18n strings if needed">
+    If your command prints user-visible messages, add keys to `chat-pwa/src/i18n/translations.ts` for completeness and run the pre-release audit.
+  </Step>
+</Steps>
+
+## Build Checks
+
+Before opening a pull request, run all of the following checks and fix any failures.
+
+<CodeGroup>
+  ```bash Python
+  # Compile-check all core modules
+  python3 -m py_compile rag_api.py config.py index.py trinaxai_cli.py
+
+  # Lint with ruff
+  ruff check .
+  ```
+
+  ```bash TypeScript / PWA
+  cd chat-pwa
+
+  # Type-check without emitting
+  npx tsc --noEmit
+
+  # Production build (must succeed without errors)
+  npm run build
+  ```
+
+  ```bash Pre-release audit
+  python3 scripts/public_readiness.py
+  ```
+</CodeGroup>
+
+The `public_readiness.py` script checks for:
+
+- **i18n completeness** — all keys present in both `es` and `en`
+- **Hardcoded values** — paths or tokens that should come from environment variables
+- **Required files** — `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, `.env.example`, etc.
+- **`.gitignore` coverage** — sensitive files that should not be committed
+
+## Submitting a Pull Request
+
+1. Fork the repo and create a branch from `main`
+2. Make your changes, following the conventions above
+3. Run the full build check suite (see above)
+4. **Sign off every commit** for DCO compliance: `git commit -s`
+5. Open the pull request against `main` with a clear description of the change and the problem it solves
+
+<Note>
+  Use present tense in commit messages ("Add feature" not "Added feature"), keep each commit focused on one logical change, and reference issues with `#123` when applicable.
+</Note>
+
+By contributing, you agree that your contribution is licensed under **AGPL-3.0-or-later**.
+
+For the full contribution guidelines including bug reporting templates and the Code of Conduct, see [CONTRIBUTING.md](https://github.com/TrinaxCode/TrinaxAI/blob/main/CONTRIBUTING.md) on GitHub.

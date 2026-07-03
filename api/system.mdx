@@ -1,0 +1,196 @@
+---
+title: "System Control API: Start, Stop, and Self-Test"
+sidebarTitle: "System"
+description: "Protected /system endpoints to start, stop, and health-check TrinaxAI services. All require localhost access or an admin bearer token."
+---
+
+The system control endpoints manage the lifecycle of local TrinaxAI services — Ollama and the RAG API process — and provide an automated self-test for CI/CD and diagnostic workflows. All endpoints on this page are protected.
+
+<Warning>
+  These endpoints are **destructive** — they can shut down the AI backend entirely or trigger a full factory reset. Only call them from trusted clients (the TrinaxAI PWA, CLI, or your own automation). Never expose port 3333 to the public internet without an admin token.
+</Warning>
+
+<Note>
+  All `/system/*` endpoints require authorization: either a call from localhost / private LAN (when `TRINAXAI_ALLOW_LAN_SYSTEM` is not disabled) **or** an `X-Admin-Token` header matching the `TRINAXAI_ADMIN_TOKEN` environment variable. If a token is provided but incorrect, the request is rejected with HTTP `403` regardless of the client IP.
+</Note>
+
+## Authentication
+
+```bash
+# Localhost — no token needed by default
+curl -X POST http://localhost:3333/system/reload
+
+# Remote LAN or production — use Bearer token
+curl -X POST http://192.168.1.100:3333/system/reload \
+  -H "X-Admin-Token: your-admin-token"
+```
+
+---
+
+## POST /system/shutdown
+
+Initiate a graceful shutdown of the AI backend (Ollama + RAG API server). The shutdown is delegated to `service_manager.py` and runs in a new detached process so the API can return a response before it exits.
+
+<Warning>
+  After calling this endpoint the RAG API will be unavailable. The PWA static frontend remains accessible for restart. Use `POST /system/startup` to bring services back online.
+</Warning>
+
+### Response
+
+<ResponseField name="ok" type="boolean">Always `true` when the shutdown has been initiated.</ResponseField>
+<ResponseField name="output" type="string">
+  Human-readable status message. Example: `"AI shutdown initiated. The PWA remains available for restart."`
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:3333/system/shutdown \
+  -H "X-Admin-Token: your-admin-token"
+```
+
+```json Response
+{
+  "ok": true,
+  "output": "AI shutdown initiated. The PWA remains available for restart."
+}
+```
+
+---
+
+## POST /system/startup
+
+Start Ollama and the RAG API. Invokes `service_manager.py start-ai` synchronously (up to 60-second timeout) and returns the result.
+
+### Response
+
+<ResponseField name="ok" type="boolean">
+  `true` if `service_manager.py` exited with code `0`. `false` if startup failed.
+</ResponseField>
+<ResponseField name="output" type="string">
+  Combined stdout from the service manager script.
+</ResponseField>
+<ResponseField name="error" type="string">
+  Combined stderr from the service manager script. Empty on success.
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:3333/system/startup \
+  -H "X-Admin-Token: your-admin-token"
+```
+
+```json Response
+{
+  "ok": true,
+  "output": "Starting Ollama... OK\nStarting RAG API... OK\n",
+  "error": ""
+}
+```
+
+---
+
+## POST /system/stop-all
+
+Stop **all** TrinaxAI services immediately — both the AI backend and any supporting processes. Equivalent to a hard stop, not a graceful drain. The request is dispatched to `service_manager.py stop-all` in a detached process.
+
+<Warning>
+  Unlike `/system/shutdown`, this terminates every managed process immediately without waiting for in-flight requests to complete.
+</Warning>
+
+### Response
+
+<ResponseField name="ok" type="boolean">Always `true` when stop-all has been initiated.</ResponseField>
+<ResponseField name="output" type="string">Status message.</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:3333/system/stop-all \
+  -H "X-Admin-Token: your-admin-token"
+```
+
+```json Response
+{
+  "ok": true,
+  "output": "Full TrinaxAI shutdown initiated."
+}
+```
+
+---
+
+## POST /system/self-test
+
+Run an automated health check suite covering Ollama connectivity, embedding model functionality, and RAG query execution. Useful for diagnostics from the PWA settings panel, post-deploy CI/CD validation, or troubleshooting a broken installation.
+
+The test suite performs four checks in order:
+
+1. **ollama** — Calls `GET /api/tags` on the configured Ollama instance and checks that at least one model is loaded.
+2. **embedding** — Calls `get_text_embedding("TrinaxAI system test")` on the active embedding model and verifies a non-empty vector is returned.
+3. **rag_indexed** — Checks whether the in-memory hybrid retriever (`_fusion_retriever`) is loaded.
+4. **rag_query** — If both Ollama and the index are available, runs a minimal retrieval query (`"test"`) and checks that at least one node is returned.
+
+### Response
+
+<ResponseField name="ok" type="boolean">
+  `true` only if **all four** checks passed.
+</ResponseField>
+<ResponseField name="results" type="object">
+  Individual check outcomes.
+
+  <Expandable title="Results object">
+    <ResponseField name="ollama" type="boolean">
+      `true` if Ollama is reachable and has at least one model loaded.
+    </ResponseField>
+    <ResponseField name="embedding" type="boolean">
+      `true` if the embedding model returned a valid vector.
+    </ResponseField>
+    <ResponseField name="rag_indexed" type="boolean">
+      `true` if the in-memory index is loaded and the hybrid retriever is ready.
+    </ResponseField>
+    <ResponseField name="rag_query" type="boolean">
+      `true` if a test retrieval query returned at least one result node.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+<ResponseField name="profile" type="string">
+  The active `TRINAXAI_PROFILE` value (e.g. `"16gb"`, `"max"`, `"8gb"`).
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:3333/system/self-test \
+  -H "X-Admin-Token: your-admin-token"
+```
+
+```json All checks passing
+{
+  "ok": true,
+  "results": {
+    "ollama": true,
+    "embedding": true,
+    "rag_indexed": true,
+    "rag_query": true
+  },
+  "profile": "16gb"
+}
+```
+
+```json Partial failure (index not yet built)
+{
+  "ok": false,
+  "results": {
+    "ollama": true,
+    "embedding": true,
+    "rag_indexed": false,
+    "rag_query": false
+  },
+  "profile": "16gb"
+}
+```
+
+<Tip>
+  If `rag_indexed` is `false`, run `python index.py` on the host (or use `POST /system/index-upload`) to build the initial index, then call `POST /system/reload` to load it into the running API.
+</Tip>

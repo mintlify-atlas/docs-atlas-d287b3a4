@@ -1,47 +1,161 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get started with TrinaxAI in under 5 minutes"
+sidebarTitle: "Quickstart"
+description: "Install TrinaxAI on Linux, macOS, or Windows, open the PWA, and run your first RAG query — all in a single command."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+By the end of this guide you will have TrinaxAI running on your machine, the PWA open in your browser, your first chat sent to a local Ollama model, the CLI installed, and your first project indexed and queryable with RAG — all without touching a cloud service or entering a credit card.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+
+  <Step title="Install TrinaxAI">
+    Run the one-command installer for your OS. It downloads Ollama, pulls the right models for your hardware, sets up the RAG API and PWA, and configures auto-start.
+
+    <CodeGroup>
+
+    ```bash Linux / macOS
+    curl -fsSL https://raw.githubusercontent.com/TrinaxCode/TrinaxAI/main/install.sh | bash
+    ```
+
+    ```powershell Windows (PowerShell)
+    git clone https://github.com/TrinaxCode/TrinaxAI.git
+    cd TrinaxAI
+    powershell -ExecutionPolicy Bypass -File .\install.ps1
+    ```
+
+    </CodeGroup>
+
+    <Note>
+      Before piping any script to your shell, review it first:
+
+      ```bash
+      curl -fsSL https://raw.githubusercontent.com/TrinaxCode/TrinaxAI/main/install.sh | less
+      ```
+
+      Alternatively, clone the repo and run `./install.sh` locally so you can inspect every line before execution.
+    </Note>
+
+    ### Install flags
+
+    Pass flags to tailor the install to your environment:
+
+    | Flag | Description |
+    |------|-------------|
+    | `--non-interactive` | Automatic install for CI/scripts — accepts all defaults |
+    | `--no-models` | Skip downloading Ollama models (useful when re-installing) |
+    | `--no-vision` | Skip the vision model download |
+    | `--no-autostart` | Do not enable boot auto-start |
+    | `--no-start` | Do not start TrinaxAI after the install finishes |
+    | `--profile 8gb\|16gb\|max\|ultra` | Override the auto-detected hardware profile |
+    | `--lan-system` | Enable LAN system-control endpoints and auto-generate an admin token |
 
     ```bash
-    npm install your-package
+    # Example: non-interactive install on a 16 GB machine, no boot auto-start
+    ./install.sh --non-interactive --profile 16gb --no-autostart
     ```
+
+    Platform-specific guides: [Linux](/installation/linux) · [macOS](/installation/macos) · [Windows](/installation/windows)
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+
+  <Step title="Open the PWA">
+    Once the installer finishes, open your browser and navigate to:
+
+    ```
+    https://localhost:3334
+    ```
+
+    <Note>
+      The PWA is served over HTTPS using a **self-signed certificate** generated at install time. Your browser will show a security warning on first visit — this is expected. Click **Advanced → Proceed to localhost** (Chrome/Edge) or **Accept the Risk** (Firefox) to continue. You only need to do this once per browser.
+
+      From a phone or tablet on the same Wi-Fi, visit `https://[YOUR-LAN-IP]:3334` and install the app from the browser's **Add to Home Screen** prompt.
+    </Note>
+
+    The 7-step onboarding wizard will guide you through selecting a default model, language preference, and dark/light theme. You can revisit any setting later from the **Settings** panel.
+  </Step>
+
+  <Step title="Send your first chat message">
+    In the PWA chat interface, type a question and press **Enter** (or the send button). TrinaxAI's auto-router picks the best local model for your query — no configuration needed.
+
+    Try asking:
+
+    ```
+    Explain how async/await works in Python with a short example.
+    ```
+
+    The response streams in real time from your local Ollama instance. No request leaves your machine.
+
+    <Tip>
+      Switch between the **Ollama** and **RAG** engines using the engine toggle in the chat toolbar, or force an engine from the CLI with `--engine ollama` or `--engine rag`.
+    </Tip>
+  </Step>
+
+  <Step title="Install the CLI">
+    The `trinaxai` CLI is a Python package in the same repo. Install it in editable mode from the repo root:
 
     ```bash
-    your-cli init
+    pip install -e .
     ```
-  </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+
+    Verify the entry point is on your PATH:
 
     ```bash
-    your-cli start
+    trinaxai --help
     ```
+
+    Available commands: `ask`, `chat`, `index`, `browse`, `research`, `memory`, `collections`, `watch`, `export`, `doctor`, `start`, `stop`
   </Step>
+
+  <Step title="Run the health check">
+    Confirm that all services are running and models are loaded:
+
+    ```bash
+    trinaxai doctor
+    ```
+
+    `doctor` checks Ollama connectivity, the RAG API health endpoint, model availability, storage layout, and embedding readiness. It prints a colour-coded report and exits non-zero if anything needs attention.
+
+    <Tip>
+      Any time something feels wrong — slow responses, missing citations, a blank PWA — run `trinaxai doctor` first. It surfaces the most common issues (Ollama not running, missing model, full disk) in seconds.
+    </Tip>
+  </Step>
+
+  <Step title="Index your first project">
+    Point TrinaxAI at a directory of code or documents. The indexer uses AST-aware chunking for 15+ programming languages and is incremental — re-running only processes changed files.
+
+    ```bash
+    trinaxai index ~/my-project
+    ```
+
+    You can also index from the PWA: open **Settings → Indexing** and enter the path, or drag-and-drop files onto the Knowledge Browser.
+
+    Watch the progress bar as chunks are embedded with `bge-m3` (or `nomic-embed-text` on the `8gb` profile) and persisted to `storage/`. Large repositories finish in seconds on subsequent runs thanks to the manifest-based change detection.
+  </Step>
+
+  <Step title="Ask a question with RAG">
+    Once indexing is complete, query your codebase with the RAG engine. TrinaxAI retrieves the most relevant chunks via hybrid vector + BM25 search, reranks them, and synthesises a grounded answer with source citations.
+
+    ```bash
+    trinaxai ask "How does authentication work?" --engine rag
+    ```
+
+    The CLI prints the answer followed by a **Sources** block showing the file path, collection, and relevance score for each cited chunk. You can browse and explore chunks interactively with:
+
+    ```bash
+    trinaxai browse
+    ```
+
+    In the PWA, citations appear as expandable **Source** cards beneath each RAG response.
+  </Step>
+
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## What to explore next
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
-</Tip>
+| Topic | Link |
+|-------|------|
+| RAG indexing options, collections, and the file watcher | [RAG & Indexing](/features/rag-and-indexing) |
+| Voice mode and vision (image analysis) | [Voice & Vision](/features/voice-and-vision) |
+| Persistent memory and knowledge collections | [Memory & Collections](/features/memory-and-collections) |
+| PWA install on iOS, Android, and desktop | [PWA](/features/pwa) |
+| Security model, LAN hardening, and `.env` reference | [Security Model](/security/model) |
+| Full CLI command reference | [CLI Reference](/cli/commands) |

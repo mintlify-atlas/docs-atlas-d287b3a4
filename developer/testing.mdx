@@ -1,0 +1,232 @@
+---
+title: "Testing and Auditing TrinaxAI Before Release"
+sidebarTitle: "Testing"
+description: "Run TrinaxAI's test suite, system health checks, static analysis, and pre-release audit scripts to validate your build before shipping."
+---
+
+TrinaxAI ships with several layers of validation — a live system smoke test, Python static checks, TypeScript type checks and a production build, an automated pre-release audit, and a CI pipeline. Run all of these before tagging a release or opening a pull request to main.
+
+## System Smoke Tests
+
+These checks require all three tiers to be running (Ollama, the RAG API, and the PWA). They verify end-to-end connectivity and confirm that the index is loaded.
+
+<CodeGroup>
+  ```bash trinaxai doctor
+  trinaxai doctor
+  ```
+
+  ```bash test_system.py
+  python3 test_system.py --verbose
+  ```
+</CodeGroup>
+
+`trinaxai doctor` is the fastest path — it hits each service endpoint and prints a human-readable status table. Use `python3 test_system.py --verbose` for the more detailed programmatic check that can be integrated into CI.
+
+<Note>
+  Both commands require the full stack to be running. Start services with `./startup_ai.sh` (Linux/macOS) or `python service_manager.py start-ai` before running these checks.
+</Note>
+
+### What `test_system.py` checks
+
+`test_system.py` runs five groups of health checks in order:
+
+<Accordion title="Runtime — Python version">
+  Verifies `sys.version_info >= (3, 10)`. TrinaxAI requires Python 3.10 or newer.
+</Accordion>
+
+<Accordion title="Ollama — service and model availability">
+  Sends a request to `{OLLAMA_BASE_URL}/api/tags` (default: `http://localhost:11434`). Reports whether Ollama is running and lists the number of available models. With `--verbose`, prints each model name and its size on disk.
+
+  **Fix:** If Ollama is not responding, run `ollama serve` or restart the service.
+</Accordion>
+
+<Accordion title="RAG API — health, index status, and profile">
+  Hits `{TRINAXAI_HEALTH_URL}/health` (default: `https://localhost:3333`) and checks:
+  - API is responding with HTTP 200
+  - `indexed: true` — the vector index is loaded into memory
+  - `profile` — the active hardware profile is reported
+  - `models` — at least one model is configured
+
+  With `--verbose`, also prints the list of indexed projects, the `num_ctx` window, and whether the reranker is active.
+
+  **Fix:** If `indexed` is false, run `python index.py` then `curl -k -X POST https://localhost:3333/system/reload`.
+</Accordion>
+
+<Accordion title="PWA — frontend responding">
+  Requests `{TRINAXAI_FRONTEND_URL}/` (default: `https://localhost:3334`) and checks for HTTP 200.
+
+  **Fix:** If the PWA is not responding, start it with `cd chat-pwa && npm run dev` for development, or rebuild with `npm run build`.
+</Accordion>
+
+<Accordion title="Resources — disk space and available RAM">
+  Checks that disk usage is below 95% on the root filesystem. On Linux it reads `/proc/meminfo`; on other platforms it falls back to `psutil` if installed. Reports available RAM in GB.
+</Accordion>
+
+You can override the endpoints `test_system.py` targets with environment variables:
+
+```bash
+OLLAMA_BASE_URL=http://localhost:11434 \
+TRINAXAI_PORT=3333 \
+TRINAXAI_HEALTH_URL=https://localhost:3333 \
+TRINAXAI_FRONTEND_URL=https://localhost:3334 \
+python3 test_system.py --verbose
+```
+
+Pass `--summary` to suppress per-check detail and print only the pass/fail totals — useful for CI log brevity.
+
+## Python Static Checks
+
+Run these without the services running — they only inspect source code.
+
+```bash
+# Syntax-check all core modules
+python3 -m py_compile rag_api.py config.py index.py trinaxai_cli.py
+
+# Lint with ruff (style, unused imports, common bugs)
+ruff check .
+```
+
+`ruff check .` runs across the entire repository. Fix any reported issues before committing. To auto-fix safe issues in-place, run `ruff check . --fix`.
+
+## PWA Checks
+
+```bash
+cd chat-pwa
+
+# TypeScript type check — catches type errors without emitting output
+npx tsc --noEmit
+
+# Production build — must complete without errors
+npm run build
+
+# Dependency audit — fails on high-severity vulnerabilities
+npm audit --audit-level=high
+```
+
+<Tip>
+  Run `npm audit --audit-level=high` after any `npm install` or dependency update. The CI pipeline also runs this automatically on pull requests.
+</Tip>
+
+## Pre-Release Audit Tool
+
+```bash
+python3 scripts/public_readiness.py
+```
+
+This script performs a comprehensive readiness scan before any public release. It does **not** require running services — it inspects the repository on disk.
+
+The audit checks:
+
+<CardGroup cols={2}>
+  <Card title="i18n Completeness" icon="language">
+    Verifies that every translation key present in the `en` object of `chat-pwa/src/i18n/translations.ts` also exists in `es`, and vice versa. Missing keys cause silent blank UI text.
+  </Card>
+  <Card title="Hardcoded Values" icon="magnifying-glass">
+    Scans Python and shell files for hardcoded paths, tokens, or credentials that should come from environment variables or `.env`.
+  </Card>
+  <Card title="Required Files" icon="file-check">
+    Confirms that `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, `README.md`, `README.es.md`, `.env.example`, and `CHANGELOG.md` (or equivalent) are present at the repo root.
+  </Card>
+  <Card title=".gitignore Coverage" icon="shield">
+    Checks that sensitive patterns (`.env`, `certs/`, `storage/`, `*.pem`, `*.key`) are covered by `.gitignore` to prevent accidental credential commits.
+  </Card>
+</CardGroup>
+
+## CI Integration
+
+The `.github/workflows/` directory contains GitHub Actions workflows that run automatically on every push and pull request.
+
+```
+.github/
+└── workflows/
+    └── ci.yml     # Python compile, TypeScript type check, frontend build
+```
+
+The CI pipeline runs:
+
+1. **Python syntax check** — `python -m compileall` across all `.py` files
+2. **TypeScript type check** — `npx tsc --noEmit` in `chat-pwa/`
+3. **Frontend build** — `npm run build` in `chat-pwa/`
+
+<Note>
+  The system smoke tests (`test_system.py`, `trinaxai doctor`) are not currently run in CI because they require live Ollama and RAG API services. The roadmap includes adding a mock-service test harness. See [ROADMAP.md](https://github.com/TrinaxCode/TrinaxAI/blob/main/ROADMAP.md) for status.
+</Note>
+
+## Common Issues and Diagnosis
+
+Use `trinaxai doctor` as your first step when something is not working. It will immediately identify which tier is failing. Here are the most common scenarios:
+
+<Accordion title="RAG API not starting (port 3333)">
+  ```bash
+  # Find what is holding the port
+  lsof -i :3333
+
+  # Start the API directly with verbose output
+  python -c "import uvicorn; uvicorn.run('rag_api:app', host='0.0.0.0', port=3333, reload=True)"
+  ```
+</Accordion>
+
+<Accordion title="Ollama not responding">
+  ```bash
+  # Check if Ollama is running
+  curl http://localhost:11434/api/tags
+
+  # Follow live Ollama logs on Linux
+  journalctl -u ollama -f
+  ```
+</Accordion>
+
+<Accordion title="PWA not loading (port 3334)">
+  ```bash
+  cd chat-pwa
+  npx vite --host 0.0.0.0 --port 3334
+  # Open the browser console for CORS errors or certificate warnings
+  ```
+</Accordion>
+
+<Accordion title="Index not loaded (indexed: false)">
+  ```bash
+  # Run the indexer
+  python index.py
+
+  # Then reload the index in the running API
+  curl -k -X POST https://localhost:3333/system/reload
+  ```
+
+  For a full reset of the index:
+
+  ```bash
+  rm -rf storage/docstore.json storage/index_store.json storage/manifest.json
+  python index.py
+  curl -k -X POST https://localhost:3333/system/reload
+  ```
+</Accordion>
+
+## Performance Testing
+
+When profiling indexing performance, watch resource usage and tune the embedding worker settings:
+
+```bash
+# Control concurrent embedding requests to Ollama
+TRINAXAI_EMBED_WORKERS=2    # Default on 16 GB; increase on powerful hardware
+TRINAXAI_EMBED_BATCH=8      # Chunks per embedding request batch
+
+# Keep the embedding model warm to avoid reload overhead
+TRINAXAI_EMBED_KEEP_ALIVE=15m
+```
+
+<Tip>
+  On a 16 GB machine, `TRINAXAI_EMBED_WORKERS=2` and `TRINAXAI_EMBED_BATCH=8` avoids the sawtooth CPU pattern caused by Ollama unloading and reloading the embedding model between batches. The `ultra` profile raises these to 6 workers and 16 per batch.
+</Tip>
+
+To watch memory and CPU during a full index run:
+
+```bash
+# Terminal 1 — start the indexer
+TRINAXAI_EMBED_WORKERS=2 TRINAXAI_EMBED_BATCH=8 python index.py
+
+# Terminal 2 — watch system resources
+watch -n1 'free -h && echo "---" && ps aux --sort=-%mem | head -8'
+```
+
+These knobs are also available in `.env` and are respected by `config.py` at startup, so changes take effect on the next service restart.

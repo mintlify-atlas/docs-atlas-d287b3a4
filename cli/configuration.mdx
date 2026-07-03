@@ -1,0 +1,153 @@
+---
+title: "Configure the TrinaxAI CLI with Environment Variables"
+sidebarTitle: "Configuration"
+description: "The TrinaxAI CLI reads configuration from environment variables and the same .env file as the backend. Override RAG URL, model, and TLS settings."
+---
+
+The TrinaxAI CLI resolves its configuration from two places: a TOML config file for persistent CLI-specific settings, and the shared `.env` file in the repo root that the backend also reads. In most cases the defaults work out of the box — the CLI connects to `localhost:3333` and `localhost:11434` automatically. This page covers every knob you can turn.
+
+## How Configuration Is Loaded
+
+When `trinaxai` starts it applies configuration in this priority order (highest first):
+
+1. **Command-line flags** — `--api-url`, `--insecure`, `--config`, etc.
+2. **`$TRINAXAI_CONFIG`** — explicit path to a TOML config file.
+3. **`~/.config/trinaxai/config.toml`** — XDG default location (auto-created on first `collections use` or similar write operation).
+4. **`.env` in the repo root** — loaded by the backend at startup; the CLI inherits these values via environment variables when launched from the same shell.
+5. **Built-in defaults** — safe values for a fresh install.
+
+The TOML config controls CLI-level defaults (base URL, engine, default collections, colour output). Environment variables in `.env` control both the backend and the CLI's low-level networking and model selection.
+
+## TOML Config File
+
+The XDG config file lives at `~/.config/trinaxai/config.toml`. Sections and their defaults:
+
+```toml
+[api]
+base_url   = "http://localhost:3333"
+verify_tls = false
+
+[defaults]
+engine      = "rag"
+model       = "qwen2.5-coder:3b"
+collections = ["default"]
+
+[ui]
+color = "auto"   # auto | always | never
+
+[session]
+enabled = false
+dir     = ""
+```
+
+Run `trinaxai config` to print the currently active configuration including resolved environment variable overrides.
+
+<Tip>
+  To point the CLI at a remote TrinaxAI instance, set `base_url = "https://my-server:3333"` in the `[api]` section and set `verify_tls = true` if you have a valid certificate.
+</Tip>
+
+## Key Environment Variables
+
+These variables are read from the process environment (or from `.env` via the backend's startup). You can export them in your shell or add them to `.env` for permanent effect.
+
+### Networking
+
+| Variable | Default | Description |
+|---|---|---|
+| `TRINAXAI_PORT` | `3333` | Port the RAG API listens on. The CLI uses this to build the default base URL. |
+| `TRINAXAI_RAG_HOST` | `localhost` | Hostname for the RAG API. Change to a LAN IP to connect from another machine. |
+| `TRINAXAI_RAG_URL` | *(derived)* | Full URL override for the RAG chat endpoint, e.g. `https://192.168.1.50:3333/v1/chat/completions`. When set, `TRINAXAI_PORT` and `TRINAXAI_RAG_HOST` are ignored. |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Base URL for the Ollama API. Override when Ollama runs on a different host or port. |
+
+### Models
+
+| Variable | Default | Description |
+|---|---|---|
+| `TRINAXAI_LLM` | *(profile-derived)* | Override the default model used by the CLI when `TRINAXAI_AUTO_ROUTE=0`. Example: `TRINAXAI_LLM=llama3.2:3b`. |
+| `TRINAXAI_AUTO_ROUTE` | `1` | Set to `1` to let TrinaxAI automatically pick the best model per query (general, code, deep). Set to `0` to always use `TRINAXAI_LLM`. |
+| `TRINAXAI_MODEL_GENERAL` | `llama3.2:3b` | Model used for general conversational queries when auto-routing is on. |
+| `TRINAXAI_MODEL_CODE` | `qwen2.5-coder:3b` | Model used for code-related queries when auto-routing is on. |
+| `TRINAXAI_MODEL_DEEP` | `qwen2.5-coder:7b` | Model used for deep/research queries when auto-routing is on. |
+
+### Security and TLS
+
+| Variable | Default | Description |
+|---|---|---|
+| `TRINAXAI_TLS_VERIFY` | `0` | Set to `1` to verify the RAG API's TLS certificate. Disabled by default because TrinaxAI uses a self-signed local certificate. Enable when using a publicly trusted cert (e.g. Let's Encrypt via nginx). |
+
+<Warning>
+  Do not set `TRINAXAI_TLS_VERIFY=1` against the default self-signed certificate — the CLI will reject the connection. Use `--insecure` or keep verification off for local-only access.
+</Warning>
+
+### Collections and Indexing
+
+| Variable | Default | Description |
+|---|---|---|
+| `TRINAXAI_COLLECTION_ID` | `default` | Default collection for RAG queries and indexing when no `--collection` flag is passed. |
+| `TRINAXAI_INDEX_BATCH_SIZE` | `100` | Number of files processed per indexing batch. Lower values use less RAM; higher values can be faster on powerful hardware. |
+| `TRINAXAI_INDEX_APPEND` | `0` | Set to `1` for append-only indexing (equivalent to `trinaxai index --append`). |
+
+## `.env` File
+
+The `.env` file lives at the repo root alongside `rag_api.py`. Copy `.env.example` to get started:
+
+```bash
+cp .env.example .env
+# Edit with your preferred editor
+nano .env
+```
+
+<Note>
+  The CLI does not load `.env` directly — the backend reads it on startup and the values become available as environment variables. If you change `.env`, restart the backend with `trinaxai stop && trinaxai start` for the changes to take effect.
+</Note>
+
+Here is a minimal `.env` snippet covering the variables most relevant to CLI usage:
+
+```bash
+# ── Network ────────────────────────────────────────────────────────────────
+TRINAXAI_PORT=3333
+TRINAXAI_RAG_HOST=localhost
+# Full URL override (uncomment to use):
+# TRINAXAI_RAG_URL=https://192.168.1.50:3333/v1/chat/completions
+
+# ── Ollama ─────────────────────────────────────────────────────────────────
+OLLAMA_BASE_URL=http://localhost:11434
+
+# ── Model routing ──────────────────────────────────────────────────────────
+# Set TRINAXAI_AUTO_ROUTE=0 to always use TRINAXAI_LLM instead of the router.
+TRINAXAI_AUTO_ROUTE=1
+# TRINAXAI_LLM=qwen2.5-coder:3b
+
+# ── Collections ────────────────────────────────────────────────────────────
+# TRINAXAI_COLLECTION_ID=default
+
+# ── TLS ────────────────────────────────────────────────────────────────────
+# Set to 1 only when using a publicly trusted certificate.
+# TRINAXAI_TLS_VERIFY=0
+
+# ── Indexing performance ───────────────────────────────────────────────────
+# TRINAXAI_INDEX_BATCH_SIZE=100
+# TRINAXAI_EMBED_WORKERS=2
+# TRINAXAI_EMBED_BATCH=8
+```
+
+## Overriding the Engine at Query Time
+
+The `--engine` flag (passed to `trinaxai` globally, before the subcommand) forces the engine for a single invocation without changing any stored configuration:
+
+```bash
+# Force RAG (context-aware, uses indexed documents)
+trinaxai --engine rag ask "What does the payments module do?"
+
+# Force Ollama (generative, no RAG context)
+trinaxai --engine ollama ask "Write a Python decorator that retries on exception"
+```
+
+Inside the `chat` REPL you can switch engines per-message using:
+
+```
+you> /engine rag
+you> /engine ollama
+```
+
+To make `rag` or `ollama` the persistent default, set `engine = "rag"` (or `"ollama"`) in the `[defaults]` section of `~/.config/trinaxai/config.toml`.

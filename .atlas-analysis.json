@@ -1,0 +1,145 @@
+{
+  "projectType": "saas",
+  "projectName": "TrinaxAI",
+  "projectDescription": "TrinaxAI is a local-first, open-source AI assistant that combines a cross-platform PWA chat interface, a developer CLI, RAG-powered code search, voice mode, and vision — all running entirely on your own machine with no cloud dependency.",
+  "theme": "luma",
+  "primaryColor": "#26bf5d",
+  "lightColor": "#1c5434",
+  "darkColor": "#0b0d0c",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation/linux",
+              "installation/macos",
+              "installation/windows"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/rag-and-indexing",
+              "features/chat-and-models",
+              "features/voice-and-vision",
+              "features/memory-and-collections",
+              "features/pwa"
+            ]
+          },
+          {
+            "group": "CLI Reference",
+            "pages": [
+              "cli/overview",
+              "cli/commands",
+              "cli/configuration"
+            ]
+          },
+          {
+            "group": "Configuration & Security",
+            "pages": [
+              "configuration/environment",
+              "configuration/profiles",
+              "security/model"
+            ]
+          },
+          {
+            "group": "Developer Guide",
+            "pages": [
+              "developer/architecture",
+              "developer/contributing",
+              "developer/testing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/overview",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/chat",
+              "api/collections",
+              "api/memory",
+              "api/indexing",
+              "api/system",
+              "api/health"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "100% local — no cloud, no subscriptions, all data stays on device",
+    "Hybrid RAG retrieval — vector (bge-m3) + BM25 keyword fusion with optional cross-encoder reranking",
+    "Multi-model auto-routing — heuristic classifier selects general/code/deep/fast models per query",
+    "AST-aware code indexing for 15+ programming languages with incremental re-indexing",
+    "Knowledge Collections — create separate RAG namespaces and query one or many",
+    "Local memory — 'remember that' facts persist across devices via shared state",
+    "Voice mode — speech recognition + text-to-speech for natural conversations",
+    "Vision support — analyze images and screenshots locally with qwen2.5-vl",
+    "Cross-platform PWA — installable on iOS, Android, and desktop with offline support",
+    "Developer CLI — trinaxai ask/chat/index/research/doctor and more",
+    "Spanish & English bilingual UI with system-preference auto-detection",
+    "One-command installers for Linux, macOS, and Windows"
+  ],
+  "publicApiSurface": [
+    "POST /v1/chat/completions — OpenAI-compatible streaming chat with RAG",
+    "POST /v1/research — deep multi-pass research with sub-question decomposition",
+    "GET /v1/sources — list indexed source files per collection",
+    "GET /v1/sources/{collection}/{file}/chunks — retrieve indexed chunks for a file",
+    "GET /v1/memory — list persistent memory entries",
+    "POST /v1/memory — create a memory entry",
+    "DELETE /v1/memory/{memory_id} — delete a memory entry",
+    "POST /v1/memory/refresh — re-summarize memory",
+    "GET /v1/memory/summary — get memory summary",
+    "POST /v1/usage — record usage statistics",
+    "GET /v1/stats — retrieve aggregated usage stats",
+    "GET /health — system status: models, index, profile, features",
+    "GET /resources — local RAM/VRAM telemetry",
+    "GET /app-state — read shared cross-device configuration",
+    "PUT /app-state — write shared state",
+    "DELETE /app-state — reset shared state",
+    "GET /collections — list all RAG collections",
+    "POST /collections — create a new collection",
+    "PATCH /collections/{collection_id} — rename a collection",
+    "DELETE /collections/{collection_id} — delete a collection",
+    "POST /documents/extract — extract text from PDF/DOCX for temporary analysis",
+    "POST /system/index-upload — upload folder for indexing",
+    "GET /system/index-jobs/{job_id} — poll indexing job status",
+    "POST /system/index-jobs/{job_id}/cancel — cancel an indexing job",
+    "POST /system/reload — hot-reload RAG index from storage",
+    "POST /system/shutdown — shut down all services",
+    "POST /system/startup — start all services",
+    "POST /system/stop-all — stop all services immediately",
+    "POST /system/self-test — run automated health checks",
+    "POST /v1/watch/start — start filesystem watcher for auto-reindexing",
+    "POST /v1/watch/stop — stop filesystem watcher",
+    "GET /v1/watch/status — get watcher status",
+    "trinaxai ask \"<query>\" — one-shot question",
+    "trinaxai chat — interactive chat session",
+    "trinaxai index <path> — index a directory",
+    "trinaxai browse — browse indexed collections",
+    "trinaxai doctor — system health check",
+    "trinaxai research \"<query>\" — multi-pass deep research",
+    "trinaxai memory — manage persistent memory entries",
+    "trinaxai collections — list or manage RAG collections",
+    "trinaxai watch — start file watcher for auto-reindexing",
+    "trinaxai export — export a conversation",
+    "trinaxai start / stop — start or stop all services",
+    "trinaxai --engine rag|ollama — force specific AI engine"
+  ]
+}

@@ -1,0 +1,250 @@
+---
+title: "Health and Resource Monitoring Endpoints"
+sidebarTitle: "Health"
+description: "GET /health returns system status including loaded models, index state, and active features. GET /resources returns RAM and VRAM usage."
+---
+
+TrinaxAI exposes two lightweight monitoring endpoints that do not require authorization. `/health` provides a comprehensive snapshot of the system state — including whether the index is loaded, which models are available, the current hardware profile, and which optional features are active. `/resources` reports local RAM and VRAM telemetry for the PWA's resource meter.
+
+<Note>
+  Both `/health` and `/resources` are open to all trusted CORS origins (localhost ports 3334/3335 and private LAN IPs) **without** an admin token. They are safe to poll frequently from the PWA.
+</Note>
+
+---
+
+## GET /health
+
+Returns a comprehensive system status snapshot. Intended to be polled by the PWA on startup and periodically to detect index readiness, Ollama availability, and active feature flags.
+
+### Response
+
+<ResponseField name="ok" type="boolean">
+  Always `true` when the RAG API is running. (The API returning any response at all means it is healthy.)
+</ResponseField>
+<ResponseField name="indexed" type="boolean">
+  `true` if the hybrid retriever (vector + BM25) is loaded and ready to answer queries.
+</ResponseField>
+<ResponseField name="ollama" type="boolean">
+  `true` if Ollama is reachable at the configured `OLLAMA_BASE_URL`. Cached for 5 seconds to avoid hammering the Ollama process.
+</ResponseField>
+<ResponseField name="projects" type="array">
+  Sorted list of project names detected in the indexed content. Empty if the index is not loaded.
+</ResponseField>
+<ResponseField name="collections" type="array">
+  Full list of collection objects (same shape as `GET /collections`).
+
+  <Expandable title="Collection object">
+    <ResponseField name="id" type="string">Collection slug ID.</ResponseField>
+    <ResponseField name="name" type="string">Collection display name.</ResponseField>
+    <ResponseField name="created_at" type="number">Unix creation timestamp.</ResponseField>
+    <ResponseField name="updated_at" type="number">Unix last-updated timestamp.</ResponseField>
+  </Expandable>
+</ResponseField>
+<ResponseField name="models" type="array">
+  The active model fleet list — ordered by preference. Derived from the current profile and `TRINAXAI_MODEL_*` environment variables. Typical 16gb fleet: `["qwen2.5-coder:3b", "qwen2.5-coder:7b", "llama3.2:3b"]`.
+</ResponseField>
+<ResponseField name="profile" type="string">
+  Active hardware profile. One of: `"8gb"`, `"16gb"`, `"max"`, `"ultra"` (or custom). Controls model selection, chunk sizes, context window, and retrieval depth.
+</ResponseField>
+<ResponseField name="num_ctx" type="integer">
+  Context window size in tokens for the active profile. `2048` for low-resource, `4096` default, `8192` for max, `16384` for ultra.
+</ResponseField>
+<ResponseField name="embed_workers" type="integer">
+  Number of concurrent embedding workers. Higher = faster indexing but more RAM pressure.
+</ResponseField>
+<ResponseField name="embed_batch_size" type="integer">
+  Number of chunks per embedding batch request.
+</ResponseField>
+<ResponseField name="embed_keep_alive" type="string">
+  How long Ollama keeps the embedding model loaded in memory between requests (e.g. `"15m"`).
+</ResponseField>
+<ResponseField name="performance_mode" type="string">
+  One of `"fast"`, `"balanced"`, `"quality"`. Controls retrieval depth and cache TTLs.
+</ResponseField>
+<ResponseField name="fusion_candidates" type="integer">
+  Number of candidates each retriever (vector + BM25) contributes before reciprocal rank fusion.
+</ResponseField>
+<ResponseField name="similarity_top_k" type="integer">
+  Final number of chunks injected into the LLM context after fusion (and optional reranking).
+</ResponseField>
+<ResponseField name="retrieval_cache_seconds" type="integer">
+  TTL for the retrieval result cache. `0` disables caching.
+</ResponseField>
+<ResponseField name="rerank" type="boolean">
+  `true` if the cross-encoder reranker (BAAI/bge-reranker-v2-m3) is enabled via `TRINAXAI_RERANK=1`.
+</ResponseField>
+<ResponseField name="features" type="object">
+  Active feature flags.
+
+  <Expandable title="Features object">
+    <ResponseField name="folder_upload_indexing" type="boolean">Always `true` — browser folder upload indexing is always available.</ResponseField>
+    <ResponseField name="hybrid_retrieval" type="boolean">Always `true` — vector + BM25 fusion is always active.</ResponseField>
+    <ResponseField name="sources" type="boolean">Always `true` — source citations are always returned.</ResponseField>
+    <ResponseField name="collections" type="boolean">Always `true` — multi-collection support is always active.</ResponseField>
+    <ResponseField name="local_app_state" type="boolean">Always `true` — app-state sync is always available.</ResponseField>
+    <ResponseField name="resources" type="boolean">Always `true` — `/resources` endpoint is always available.</ResponseField>
+    <ResponseField name="lan_system_actions" type="boolean">`true` if `TRINAXAI_ALLOW_LAN_SYSTEM` is enabled (default: `true`).</ResponseField>
+    <ResponseField name="profiles" type="array">List of valid profile names: `["8gb", "16gb", "max", "ultra"]`.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```bash
+curl http://localhost:3333/health
+```
+
+```json Response (16gb profile, index loaded)
+{
+  "ok": true,
+  "indexed": true,
+  "ollama": true,
+  "projects": ["AdminPanel", "Insider", "MyApp"],
+  "collections": [
+    {
+      "id": "default",
+      "name": "General",
+      "created_at": 1718000000.0,
+      "updated_at": 1718000000.0
+    },
+    {
+      "id": "my-project",
+      "name": "My Project",
+      "created_at": 1718100000.0,
+      "updated_at": 1718200000.0
+    }
+  ],
+  "models": ["qwen2.5-coder:3b", "qwen2.5-coder:7b", "llama3.2:3b"],
+  "profile": "16gb",
+  "num_ctx": 4096,
+  "embed_workers": 2,
+  "embed_batch_size": 8,
+  "embed_keep_alive": "15m",
+  "performance_mode": "fast",
+  "fusion_candidates": 8,
+  "similarity_top_k": 4,
+  "retrieval_cache_seconds": 20,
+  "rerank": false,
+  "features": {
+    "folder_upload_indexing": true,
+    "hybrid_retrieval": true,
+    "sources": true,
+    "collections": true,
+    "local_app_state": true,
+    "resources": true,
+    "lan_system_actions": true,
+    "profiles": ["8gb", "16gb", "max", "ultra"]
+  }
+}
+```
+
+```json Response (no index yet)
+{
+  "ok": true,
+  "indexed": false,
+  "ollama": true,
+  "projects": [],
+  "collections": [
+    {
+      "id": "default",
+      "name": "General",
+      "created_at": 1718000000.0,
+      "updated_at": 1718000000.0
+    }
+  ],
+  "models": ["qwen2.5-coder:3b", "qwen2.5-coder:7b", "llama3.2:3b"],
+  "profile": "16gb",
+  "num_ctx": 4096,
+  "embed_workers": 2,
+  "embed_batch_size": 8,
+  "embed_keep_alive": "15m",
+  "performance_mode": "fast",
+  "fusion_candidates": 8,
+  "similarity_top_k": 4,
+  "retrieval_cache_seconds": 20,
+  "rerank": false,
+  "features": {
+    "folder_upload_indexing": true,
+    "hybrid_retrieval": true,
+    "sources": true,
+    "collections": true,
+    "local_app_state": true,
+    "resources": true,
+    "lan_system_actions": true,
+    "profiles": ["8gb", "16gb", "max", "ultra"]
+  }
+}
+```
+
+---
+
+## GET /resources
+
+Basic local RAM telemetry for the PWA's resource usage panel. Uses `psutil` when available for precise used/available figures, with a graceful fallback to OS syscalls (`sysconf`) that only reports total RAM. VRAM reporting is reserved for a future release (`vram: null`).
+
+<Note>
+  This endpoint requires `psutil` for full RAM metrics (`used_gb`, `percent`). Without it, only `total` is reported. Install with `pip install psutil` for complete telemetry.
+</Note>
+
+### Response
+
+<ResponseField name="ok" type="boolean">Always `true`.</ResponseField>
+<ResponseField name="ram" type="object | null">
+  RAM usage object. `null` if memory information could not be read from the OS.
+
+  <Expandable title="RAM object">
+    <ResponseField name="total" type="integer">
+      Total physical RAM in bytes (always present when `ram` is not null).
+    </ResponseField>
+    <ResponseField name="available" type="integer | null">
+      Available (free + reclaimable) RAM in bytes. `null` without `psutil`.
+    </ResponseField>
+    <ResponseField name="used" type="integer | null">
+      Used RAM in bytes. `null` without `psutil`.
+    </ResponseField>
+    <ResponseField name="percent" type="number | null">
+      RAM usage as a percentage `[0.0, 100.0]`. `null` without `psutil`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+<ResponseField name="vram" type="null">
+  Reserved for future GPU VRAM telemetry. Always `null` in the current release.
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+```bash curl
+curl http://localhost:3333/resources
+```
+</CodeGroup>
+
+```json With psutil installed
+{
+  "ok": true,
+  "ram": {
+    "total": 34359738368,
+    "available": 22548578304,
+    "used": 11811160064,
+    "percent": 34.4
+  },
+  "vram": null
+}
+```
+
+```json Without psutil (sysconf fallback)
+{
+  "ok": true,
+  "ram": {
+    "total": 34359738368,
+    "available": null,
+    "used": null,
+    "percent": null
+  },
+  "vram": null
+}
+```
+
+<Tip>
+  The `total` value is in bytes. To convert to GB: `total / (1024 ** 3)`. For the example above: `34359738368 / 1073741824 ≈ 32 GB`.
+</Tip>

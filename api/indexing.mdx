@@ -1,0 +1,460 @@
+---
+title: "Indexing API: Upload and Track Document Indexing Jobs"
+sidebarTitle: "Indexing"
+description: "POST /system/index-upload to start an indexing job via multipart upload. Poll job status with GET /system/index-jobs/{job_id}."
+---
+
+The indexing API lets you upload a folder's worth of files from the browser and track the resulting background job. Files are copied to `local_sources/collections/<collection_id>/<label>-<timestamp>/`, then `index.py` is spawned as a subprocess to chunk and embed them. The in-memory retriever reloads automatically when the job completes. All endpoints on this page require authorization.
+
+<Note>
+  All indexing and watcher endpoints require authorization via localhost/LAN access or an `X-Admin-Token` header.
+</Note>
+
+---
+
+## POST /system/index-upload
+
+Upload a folder for indexing via a multipart form. The browser's native folder picker provides the files — TrinaxAI copies them into a local staging directory and launches a background indexing job.
+
+<Warning>
+  Maximum upload size is **512 MB** (configurable via `TRINAXAI_UPLOAD_MAX_BYTES`). Maximum number of files is **2,500** (configurable via `TRINAXAI_UPLOAD_MAX_FILES`). Individual files larger than **3 MB** are skipped (configurable via `TRINAXAI_MAX_FILE_BYTES`).
+</Warning>
+
+### Request
+
+`multipart/form-data` with the following fields:
+
+<ParamField body="files" type="file[]" required>
+  One or more files to index. File paths are sanitized to prevent path traversal. Unsupported or oversized files are skipped automatically.
+</ParamField>
+
+<ParamField body="label" type="string" default="import">
+  Human-readable label for the import batch (e.g. `"InsiderApp"` or `"Q2Docs"`). Used in the target directory name and job metadata. Sanitized to alphanumeric + dots, spaces, and hyphens.
+</ParamField>
+
+<ParamField body="collection_id" type="string" default="default">
+  ID of the collection to index files into. If the collection does not yet exist it is created automatically.
+</ParamField>
+
+### Response
+
+<ResponseField name="ok" type="boolean">Always `true` when the job is successfully started.</ResponseField>
+<ResponseField name="job_id" type="string">
+  Unique hex ID for the background indexing job. Use this with `GET /system/index-jobs/{job_id}` to poll progress.
+</ResponseField>
+<ResponseField name="indexed" type="boolean">Always `false` at job start — indexing runs in the background.</ResponseField>
+<ResponseField name="path" type="string">Absolute path of the staging directory where files were saved.</ResponseField>
+<ResponseField name="saved" type="integer">Number of files successfully saved to the staging directory.</ResponseField>
+<ResponseField name="skipped" type="integer">Number of files skipped (oversized, unsafe paths, or write errors).</ResponseField>
+<ResponseField name="bytes" type="integer">Total bytes saved to disk.</ResponseField>
+<ResponseField name="collection_id" type="string">Resolved collection ID for this job.</ResponseField>
+<ResponseField name="collection_name" type="string">Display name of the resolved collection.</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:3333/system/index-upload \
+  -H "X-Admin-Token: your-token" \
+  -F "label=InsiderApp" \
+  -F "collection_id=my-project" \
+  -F "files=@src/auth.py" \
+  -F "files=@src/models.py" \
+  -F "files=@docs/architecture.md"
+```
+
+```json Response
+{
+  "ok": true,
+  "job_id": "f3a2b1c4d5e6f7a8b9c0d1e2f3a4b5c6",
+  "indexed": false,
+  "path": "/home/user/TrinaxAI/local_sources/collections/my-project/InsiderApp-20240611-143000",
+  "saved": 3,
+  "skipped": 0,
+  "bytes": 18432,
+  "projects": [],
+  "collection_id": "my-project",
+  "collection_name": "My Project"
+}
+```
+
+---
+
+## GET /system/index-jobs/{job_id}
+
+Poll the status and progress of a running or completed indexing job.
+
+### Path parameters
+
+<ParamField path="job_id" type="string" required>
+  The job ID returned by `POST /system/index-upload`.
+</ParamField>
+
+### Response
+
+<ResponseField name="id" type="string">The job ID.</ResponseField>
+<ResponseField name="label" type="string">Human-readable batch label.</ResponseField>
+<ResponseField name="status" type="string">
+  Current job state. One of: `"saving"`, `"indexing"`, `"completed"`, `"failed"`, `"cancelled"`.
+</ResponseField>
+<ResponseField name="phase" type="string">
+  Granular phase within the current status. Examples: `"starting"`, `"chunking"`, `"embedding"`, `"saving_index"`, `"finishing"`, `"completed"`, `"failed"`, `"cancelled"`.
+</ResponseField>
+<ResponseField name="progress" type="integer">
+  Estimated completion percentage `[0, 100]`.
+</ResponseField>
+<ResponseField name="eta_seconds" type="integer | null">
+  Estimated seconds remaining, or `null` if not calculable yet.
+</ResponseField>
+<ResponseField name="elapsed_seconds" type="integer">
+  Seconds elapsed since the job started.
+</ResponseField>
+<ResponseField name="saved" type="integer">Files saved to the staging directory.</ResponseField>
+<ResponseField name="skipped" type="integer">Files that were skipped.</ResponseField>
+<ResponseField name="bytes" type="integer">Total bytes processed.</ResponseField>
+<ResponseField name="indexed" type="boolean">
+  `true` once the in-memory retriever has been successfully reloaded with the new content.
+</ResponseField>
+<ResponseField name="projects" type="array">
+  List of project names detected in the indexed content (populated after completion).
+</ResponseField>
+<ResponseField name="collection_id" type="string">Collection ID for this job.</ResponseField>
+<ResponseField name="collection_name" type="string">Collection display name.</ResponseField>
+<ResponseField name="output" type="string">
+  Last 8,000 characters of stdout from `index.py`. Useful for diagnosing failures.
+</ResponseField>
+<ResponseField name="error" type="string">
+  Error message if the job failed, otherwise empty string.
+</ResponseField>
+<ResponseField name="cancel_requested" type="boolean">Whether cancellation was requested.</ResponseField>
+<ResponseField name="created_at" type="number">Unix timestamp when the job was created.</ResponseField>
+<ResponseField name="finished_at" type="number | null">Unix timestamp when the job finished, or `null` if still running.</ResponseField>
+
+### Example
+
+```bash
+curl http://localhost:3333/system/index-jobs/f3a2b1c4d5e6f7a8b9c0d1e2f3a4b5c6 \
+  -H "X-Admin-Token: your-token"
+```
+
+```json Response
+{
+  "id": "f3a2b1c4d5e6f7a8b9c0d1e2f3a4b5c6",
+  "label": "InsiderApp",
+  "status": "indexing",
+  "phase": "embedding",
+  "progress": 65,
+  "eta_seconds": 42,
+  "elapsed_seconds": 78,
+  "saved": 3,
+  "skipped": 0,
+  "bytes": 18432,
+  "indexed": false,
+  "projects": [],
+  "collection_id": "my-project",
+  "collection_name": "My Project",
+  "output": "Troceando archivos... 3/3\nEmbedding chunks...\n",
+  "error": "",
+  "cancel_requested": false,
+  "created_at": 1718200000.0,
+  "finished_at": null
+}
+```
+
+---
+
+## POST /system/index-jobs/{job_id}/cancel
+
+Request cancellation of a running index job. The subprocess is sent `SIGTERM` and the job transitions to `"cancelled"` status. Already-saved files in the staging directory are not removed.
+
+### Path parameters
+
+<ParamField path="job_id" type="string" required>
+  The job ID to cancel.
+</ParamField>
+
+### Response
+
+<ResponseField name="ok" type="boolean">Always `true` when the cancellation request is accepted.</ResponseField>
+<ResponseField name="job" type="object">
+  The final job state object (same shape as `GET /system/index-jobs/{job_id}`).
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST \
+  http://localhost:3333/system/index-jobs/f3a2b1c4d5e6f7a8b9c0d1e2f3a4b5c6/cancel \
+  -H "X-Admin-Token: your-token"
+```
+
+```json Response
+{
+  "ok": true,
+  "job": {
+    "id": "f3a2b1c4d5e6f7a8b9c0d1e2f3a4b5c6",
+    "status": "cancelled",
+    "phase": "cancelled",
+    "progress": 100,
+    "indexed": false,
+    "finished_at": 1718200180.0
+  }
+}
+```
+
+---
+
+## POST /system/reload
+
+Hot-reload the RAG index from the `storage/` directory without restarting the API server. Call this after running `python index.py` manually on the host or after making changes to `local_sources/`.
+
+### Response
+
+<ResponseField name="ok" type="boolean">
+  `true` if the index was loaded successfully. `false` if `storage/` has no valid index yet.
+</ResponseField>
+<ResponseField name="indexed" type="boolean">
+  `true` if the in-memory retriever is now active.
+</ResponseField>
+<ResponseField name="projects" type="array">
+  List of project names detected in the freshly loaded index.
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:3333/system/reload \
+  -H "X-Admin-Token: your-token"
+```
+
+```json Response
+{
+  "ok": true,
+  "indexed": true,
+  "projects": ["Insider", "MyApp", "AdminPanel"]
+}
+```
+
+---
+
+## POST /v1/watch/start
+
+Start a filesystem watcher (backed by `watchdog`) that automatically triggers a re-index whenever files in the watched directories are created, modified, moved, or deleted. Requires the `watchdog` Python package to be installed.
+
+<Note>
+  Returns HTTP `501` if `watchdog` is not installed. Install it with `pip install watchdog`.
+</Note>
+
+### Request body
+
+<ParamField body="paths" type="array">
+  List of absolute directory paths to watch recursively. If omitted, TrinaxAI auto-discovers sensible defaults based on `local_sources/` and the active collection's subdirectory.
+</ParamField>
+
+<ParamField body="collection" type="string">
+  Collection ID used to narrow the default path discovery when `paths` is not provided.
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  `"started"` if the watcher was launched. `"already_running"` if a watcher is already active.
+</ResponseField>
+<ResponseField name="watching" type="array">
+  List of absolute directory paths now being watched.
+</ResponseField>
+<ResponseField name="pid" type="integer">
+  Process ID of the RAG API server hosting the watcher thread.
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:3333/v1/watch/start \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: your-token" \
+  -d '{"paths": ["/home/user/projects/Insider"], "collection": "my-project"}'
+```
+
+```json Response
+{
+  "status": "started",
+  "watching": ["/home/user/projects/Insider"],
+  "pid": 12345
+}
+```
+
+---
+
+## POST /v1/watch/stop
+
+Stop the running filesystem watcher. If no watcher is active, returns `"not_running"`.
+
+### Response
+
+<ResponseField name="status" type="string">
+  `"stopped"` if a watcher was running and has been stopped. `"not_running"` if there was nothing to stop.
+</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:3333/v1/watch/stop \
+  -H "X-Admin-Token: your-token"
+```
+
+```json Response
+{
+  "status": "stopped"
+}
+```
+
+---
+
+## GET /v1/watch/status
+
+Report the current state of the filesystem watcher.
+
+### Response
+
+<ResponseField name="running" type="boolean">
+  `true` if the watcher observer thread is alive.
+</ResponseField>
+<ResponseField name="watching" type="array">
+  List of absolute directory paths currently being watched. Empty if not running.
+</ResponseField>
+<ResponseField name="events_seen" type="integer">
+  Total number of filesystem events processed since the watcher was started.
+</ResponseField>
+<ResponseField name="started_at" type="number | null">
+  Unix timestamp when the watcher was started, or `null` if not running.
+</ResponseField>
+
+### Example
+
+```bash
+curl http://localhost:3333/v1/watch/status \
+  -H "X-Admin-Token: your-token"
+```
+
+```json Response
+{
+  "running": true,
+  "watching": ["/home/user/projects/Insider"],
+  "events_seen": 14,
+  "started_at": 1718200000.0
+}
+```
+
+---
+
+## POST /v1/usage
+
+Record a usage event from frontend-only flows (e.g. direct Ollama chat that bypasses the RAG API). These events are appended to `storage/usage.jsonl` and rolled into the usage summary.
+
+### Request body
+
+<ParamField body="engine" type="string" default="ollama">
+  Usage engine identifier (e.g. `"ollama"`, `"rag"`, `"direct"`). Max 40 characters.
+</ParamField>
+
+<ParamField body="model" type="string" default="unknown">
+  Model name used for the request. Max 120 characters.
+</ParamField>
+
+<ParamField body="project" type="string">
+  Optional project name associated with the request.
+</ParamField>
+
+<ParamField body="collections" type="array">
+  Optional list of collection IDs involved in the request.
+</ParamField>
+
+<ParamField body="est_tokens" type="integer" default="0">
+  Estimated token count for the request. Used for the aggregated token counter in `/v1/stats`.
+</ParamField>
+
+### Response
+
+<ResponseField name="ok" type="boolean">Always `true`.</ResponseField>
+
+### Example
+
+```bash
+curl -X POST http://localhost:3333/v1/usage \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: your-token" \
+  -d '{
+    "engine": "ollama",
+    "model": "qwen2.5-coder:3b",
+    "project": "Insider",
+    "collections": ["my-project"],
+    "est_tokens": 1200
+  }'
+```
+
+```json Response
+{"ok": true}
+```
+
+---
+
+## GET /v1/stats
+
+Retrieve aggregated local usage statistics built from `storage/usage.jsonl`. The summary is incrementally maintained on every usage record write and served from `storage/usage_summary.json` for fast reads.
+
+### Response
+
+<ResponseField name="messages_total" type="integer">
+  Total number of recorded usage events.
+</ResponseField>
+<ResponseField name="messages_by_engine" type="object">
+  Map of engine name → count, sorted by descending count.
+</ResponseField>
+<ResponseField name="tokens_estimated" type="integer">
+  Sum of all `est_tokens` values across all recorded events.
+</ResponseField>
+<ResponseField name="top_collections" type="array">
+  Top 10 collections by usage count, each as `{"id": string, "count": integer}`.
+</ResponseField>
+<ResponseField name="top_models" type="array">
+  Top 10 models by usage count, each as `{"model": string, "count": integer}`.
+</ResponseField>
+<ResponseField name="index_runs" type="integer">
+  Number of indexing runs recorded.
+</ResponseField>
+<ResponseField name="first_seen" type="number">
+  Unix timestamp of the earliest recorded event. `0.0` if no events yet.
+</ResponseField>
+<ResponseField name="last_seen" type="number">
+  Unix timestamp of the most recent recorded event.
+</ResponseField>
+
+### Example
+
+```bash
+curl http://localhost:3333/v1/stats \
+  -H "X-Admin-Token: your-token"
+```
+
+```json Response
+{
+  "messages_total": 1523,
+  "messages_by_engine": {
+    "rag": 1200,
+    "ollama": 323
+  },
+  "tokens_estimated": 450000,
+  "top_collections": [
+    {"id": "default", "count": 900},
+    {"id": "my-project", "count": 623}
+  ],
+  "top_models": [
+    {"model": "qwen2.5-coder:3b", "count": 800},
+    {"model": "llama3.2:3b", "count": 400},
+    {"model": "qwen2.5-coder:7b", "count": 323}
+  ],
+  "index_runs": 12,
+  "first_seen": 1717000000.0,
+  "last_seen": 1718300000.0
+}
+```

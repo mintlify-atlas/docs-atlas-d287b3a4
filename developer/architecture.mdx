@@ -1,0 +1,213 @@
+---
+title: "TrinaxAI Architecture: Three-Tier Local AI Stack"
+sidebarTitle: "Architecture"
+description: "TrinaxAI is a three-tier local stack: React PWA on 3334, FastAPI RAG engine on 3333, and Ollama on 11434. All tiers run on your device."
+---
+
+TrinaxAI is a **three-tier local stack** where every component runs on your own device. The React PWA on port 3334 talks to the FastAPI RAG engine on port 3333, which in turn drives Ollama on port 11434. No request ever leaves your machine or trusted LAN — there is no cloud dependency at any tier.
+
+## System Diagram
+
+```
+┌──────────────────────────────────────────┐
+│              Your Device                 │
+│  ┌──────────┐  ┌─────────────────────┐   │
+│  │PWA(React)│  │ VSCode (Continue)   │   │
+│  │  :3334   │  │ continue-config.yaml│   │
+│  └─────┬─────┘  └──────────┬──────────┘  │
+│        │                   │              │
+│  ┌─────┴───────────────────┴──────────┐  │
+│  │    RAG API (FastAPI) :3333         │  │
+│  │ LlamaIndex · bge-m3 · BM25        │  │
+│  └─────┬──────────────────────────────┘  │
+│        │                                  │
+│  ┌─────┴──────┐                           │
+│  │   Ollama   │  qwen2.5 · llama3.2      │
+│  │   :11434   │  bge-m3 · moondream      │
+│  └────────────┘                           │
+└──────────────────────────────────────────┘
+```
+
+The three tiers are:
+
+1. **PWA Frontend** — React 19 + TypeScript + Vite, served on port 3334
+2. **RAG API** — FastAPI + LlamaIndex, running on port 3333
+3. **Ollama** — Local model runtime, on port 11434
+
+## Components
+
+The following table lists every major file and package in the repository and its role in the system.
+
+| Component | Role |
+|---|---|
+| `config.py` | Central configuration hub — models, hardware profiles, embedding presets, factory functions (`make_llm()`, `make_embed()`, `make_reranker()`), and the heuristic `route_model()` auto-router |
+| `rag_api.py` | FastAPI backend (2000+ lines) — hybrid retrieval, memory, collections, project detection, deep research, file watcher, rate limiting, and usage stats |
+| `index.py` | Document indexer — AST-aware chunking, aggressive directory pruning, incremental mode with manifest, collection tagging |
+| `trinaxai_cli/` | Modular CLI package — subcommands: `chat`, `index`, `browse`, `research`, `memory`, `collections`, `watch`, `export`, `obsidian`, `doctor` and more |
+| `service_manager.py` | Cross-platform service supervisor — systemd on Linux, launchctl on macOS, subprocess supervisor on Windows |
+| `chat-pwa/` | React 19 + TypeScript + Vite PWA frontend — 18 components, Tailwind CSS, framer-motion, bilingual i18n |
+
+### `config.py` — Central Configuration Hub
+
+`config.py` is the single source of truth imported by `rag_api.py`, `index.py`, and `trinaxai_cli.py`. It exposes:
+
+- **Model fleet** — `MODEL_GENERAL`, `MODEL_CODE`, `MODEL_DEEP`, `MODEL_FAST` — each overridable via environment variable (e.g. `TRINAXAI_MODEL_CODE`)
+- **Hardware profiles** — auto-tuned by `TRINAXAI_PROFILE` (`8gb`, `16gb`, `max`, `ultra`) — controls chunk sizes, embedding workers, context windows, and model selection
+- **Embedding presets** — `balanced` (bge-m3, multilingual, 1024 dims), `lite` (nomic-embed-text, 768 dims), `fast` (all-minilm, 384 dims)
+- **Factory functions** — `make_llm()`, `make_embed()`, `make_reranker()` — construct LlamaIndex-compatible objects wired to the active profile
+- **Auto-router** — `route_model(text)` — heuristic classifier; no LLM call needed, returns the right model name instantly
+
+### `rag_api.py` — FastAPI Backend
+
+The heart of the system. Key subsystems:
+
+| Feature | Implementation |
+|---|---|
+| **Hybrid retrieval** | Vector (bge-m3) + BM25 (keyword) → reciprocal rank fusion |
+| **Reranking** | Cross-encoder (`bge-reranker-v2-m3`) reorders candidates after fusion |
+| **Collections** | Separate namespaces within the same vector store |
+| **Project detection** | Heuristic from file paths and user query |
+| **Memory** | Explicit "remember that" facts stored and auto-summarized |
+| **Deep research** | Multi-pass decomposition with sub-question RAG |
+| **File watcher** | `watchdog` monitors the filesystem for auto-reindexing |
+| **Rate limiting** | Token bucket, 30 req/min per IP, thread-safe |
+| **Usage stats** | JSONL-based local analytics written to `storage/usage.jsonl` |
+| **App state sync** | Cross-device shared key-value store via `storage/app_state.json` |
+
+### `chat-pwa/` — React PWA Frontend
+
+18 TypeScript components with Tailwind CSS and framer-motion:
+
+| Component | Purpose |
+|---|---|
+| `ChatInterface` | Main chat UI — streaming, markdown, voice, slash commands |
+| `ChatSidebar` | Session history, search, export (Markdown/PDF/Word) |
+| `Settings` | 5-section config panel (general, indexing, prompts, memory, stats) |
+| `KnowledgeBrowser` | Explore indexed chunks by collection → file → chunk |
+| `Sources` | Citation cards with file, project, snippet, and relevance score |
+| `OnboardingWizard` | 7-step first-time setup |
+| `Docs` | 11-section in-app documentation |
+
+**Tech stack:** React 19, Vite 6, TypeScript, Tailwind CSS, `vite-plugin-pwa`, `react-markdown`
+
+## Chat Data Flow
+
+When a user sends a message, the system routes it through this pipeline:
+
+```
+User types query in PWA
+  │
+  ├─ Slash command? → built-in handler (e.g., /index, /memory)
+  ├─ Image attached? → routeVisionModel() → streamOllamaVision()
+  ├─ Docs attached? → extractDocumentText() → inject into prompt
+  │
+  └─ Normal text:
+       │
+       ├─ RAG engine:
+       │    POST /v1/chat/completions → FastAPI
+       │    │
+       │    ├─ route_model(query) → picks best Ollama model (heuristic)
+       │    ├─ prepare_query() → enriches with previous user turn
+       │    ├─ _fusion_retriever.retrieve() → hybrid vector+BM25 search
+       │    ├─ detect_project() → filters by mentioned project
+       │    ├─ collections filter → narrows to active collections
+       │    ├─ reranker → reorders by cross-encoder relevance
+       │    ├─ get_response_synthesizer().synthesize() → LLM with context
+       │    └─ SSE stream + source citations → back to PWA
+       │
+       └─ Ollama engine:
+            routeOllamaModel() → Ollama /api/chat (JSON lines)
+            → model unload (keep_alive=0)
+```
+
+<Note>
+  The auto-router (`route_model()`) is a pure heuristic — it scans the query text for code keywords and complexity signals. No LLM is called for routing, making it instant and free.
+</Note>
+
+## Indexing Flow
+
+`index.py` runs in stages, only touching files that have changed since the last run:
+
+```
+index.py starts
+  │
+  ├─ collect_files(root) → os.walk with aggressive directory pruning
+  │   (skips node_modules, .git, venv, dist, __pycache__, etc.)
+  │
+  ├─ current_state(paths) → {source_key: mtime}
+  │
+  ├─ read_manifest() → canonicalized key map (collection:path → mtime)
+  │
+  ├─ Diff: new_files, changed_files, deleted_files
+  │
+  ├─ load_docs(paths) → Document objects with metadata
+  │
+  ├─ build_nodes(docs) → CodeSplitter (AST) or SentenceSplitter (prose)
+  │
+  ├─ Embed nodes (bge-m3 via Ollama — no LLM call during this phase)
+  │
+  └─ persist to storage/ + write_manifest()
+```
+
+## Key Design Decisions
+
+<Accordion title="No LLM during indexing">
+  Only embedding models run during indexing. This saves RAM, keeps indexing fast, and means you can re-index a large codebase without blocking the LLM for chat.
+</Accordion>
+
+<Accordion title="AST-aware chunking">
+  `CodeSplitter` uses tree-sitter to chunk at function and class boundaries for 15+ languages. This keeps logical units intact so retrieved chunks contain whole functions rather than arbitrary slices.
+</Accordion>
+
+<Accordion title="Hybrid search: vector + BM25">
+  Each query is run through both a vector (semantic) retriever and a BM25 (keyword) retriever. Results are merged with reciprocal rank fusion. This catches both conceptually similar passages and exact keyword matches.
+</Accordion>
+
+<Accordion title="Heuristic auto-routing — no LLM call">
+  `route_model()` in `config.py` inspects the query for code hints (`_CODE_HINTS`) and complexity hints (`_DEEP_HINTS`). The right model is picked in microseconds with zero API calls.
+</Accordion>
+
+<Accordion title="Collections as a first-class concept">
+  Every indexed chunk carries a `collection_id` metadata tag. The API, CLI, and PWA all expose collection-scoped queries, so you can keep project knowledge bases cleanly separated.
+</Accordion>
+
+<Accordion title="PWA over Electron">
+  Serving the frontend as a PWA avoids the Electron binary, Chromium bundling, and native toolchain requirements. The app is installable on iOS, Android, and desktop from the browser — no app store needed.
+</Accordion>
+
+<Accordion title="Incremental indexing with manifest">
+  `storage/manifest.json` maps `collection:path → mtime`. On each run, `index.py` diffs the current filesystem state against the manifest and only re-processes new or changed files. Re-indexing a large repository after a small edit takes seconds.
+</Accordion>
+
+## Storage Layout
+
+All persistent state lives under `storage/`:
+
+```
+storage/
+├── docstore.json          # LlamaIndex document store
+├── index_store.json       # FAISS/vector index metadata
+├── manifest.json          # File → mtime for incremental indexing
+├── collections.json       # Collection metadata
+├── usage.jsonl            # Usage statistics (JSON lines)
+└── app_state.json         # Cross-device shared state
+```
+
+<Tip>
+  To force a full reindex, delete `docstore.json`, `index_store.json`, and `manifest.json`, then run `python index.py`.
+</Tip>
+
+## Security Model
+
+TrinaxAI is local-first by design. Here is a brief summary of the security layers:
+
+| Layer | Mechanism |
+|---|---|
+| **Network** | Localhost + private LAN only (CORS filtered by IP + port) |
+| **System endpoints** | Require localhost/LAN or `TRINAXAI_ADMIN_TOKEN` |
+| **LAN control** | `TRINAXAI_ALLOW_LAN_SYSTEM=0` disables LAN system access (default) |
+| **TLS** | HTTPS with self-signed certs; `TRINAXAI_TLS_VERIFY` controls verification |
+| **Sudoers** | `setup_trinaxai.sh` creates `/etc/sudoers.d/trinaxai` for service control |
+| **Data** | All data stays on device — no cloud uploads, no telemetry |
+
+For the full threat model and reporting process, see the [Security Model](/security/model) page.

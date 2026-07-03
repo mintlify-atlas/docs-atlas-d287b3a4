@@ -1,0 +1,269 @@
+---
+title: "TrinaxAI Security Model: Local-First, No Cloud, No Telemetry"
+sidebarTitle: "Security Model"
+description: "TrinaxAI is designed for privacy. All data stays on your device. System endpoints require authorization, and LAN system control is disabled by default."
+---
+
+TrinaxAI is a **local-first** application. Your code, documents, conversations, and queries never leave your machine. There are no cloud calls, no telemetry, no analytics backends, and no subscriptions that could be data-mined. The only active network endpoints are Ollama on `localhost:11434` and the RAG API on `localhost:3333` — both bound to your own device.
+
+This page explains the full security model: what is protected by default, what you must explicitly enable to expand access, and the recommended hardening steps for LAN or remote deployment.
+
+---
+
+## Privacy Guarantee
+
+Every component runs on your local machine or trusted LAN:
+
+- **Ollama** — runs on `127.0.0.1:11434` by default. All LLM inference is local.
+- **RAG API** — FastAPI backend on `localhost:3333`. All vector search, BM25 retrieval, and reranking are local.
+- **PWA** — static React app served over self-signed HTTPS. No external API calls except Google Fonts.
+- **Indexer** — reads only files you specify. Writes only to `storage/` and `local_sources/` within the repo directory.
+
+<Note>
+  The README FAQ confirms: "No chat data, code, or documents leave your machine." The only external request from the PWA is to Google Fonts for typography — no content is transmitted.
+</Note>
+
+---
+
+## Security Layers
+
+The table below maps each component to its default posture and how to harden it further.
+
+| Layer | Default | How to harden |
+|---|---|---|
+| **RAG API** | Binds to `0.0.0.0:3333` for LAN PWA and phone access | Set `TRINAXAI_HOST=127.0.0.1` for localhost-only |
+| **System endpoints** (`/system/*`) | Require localhost origin or valid admin token | Set `TRINAXAI_ADMIN_TOKEN` to a strong value; keep `TRINAXAI_ALLOW_LAN_SYSTEM=0` |
+| **Ollama** | Binds to `127.0.0.1:11434` by default | Firewall port 11434; do not set `OLLAMA_HOST=0.0.0.0` unless required |
+| **PWA** | Served over HTTPS with a generated self-signed certificate | Trust the cert per device; use nginx/Caddy with Let's Encrypt for a custom domain |
+| **File uploads** | Sanitized and sandboxed to `local_sources/collections/` | Adjust `TRINAXAI_UPLOAD_MAX_BYTES` and `TRINAXAI_UPLOAD_MAX_FILES` |
+| **CORS** | `localhost` + your LAN IP allowlist | Customize via `TRINAXAI_CORS_ORIGINS` |
+
+---
+
+## LAN System Control
+
+System endpoints (`/system/*`) provide privileged operations: starting and stopping services, triggering indexing, uploading files, and modifying configuration. These endpoints are **disabled for LAN origins by default**.
+
+<Warning>
+  Do not enable `TRINAXAI_ALLOW_LAN_SYSTEM=1` on untrusted networks (public WiFi, shared office networks). Anyone on the same network segment could trigger indexing, shutdown, or file uploads without needing physical access to your machine.
+</Warning>
+
+### Enabling LAN system control
+
+<Tabs>
+  <Tab title="At install time (recommended)">
+    ```bash
+    ./install.sh --lan-system
+    ```
+    The installer generates a strong `TRINAXAI_ADMIN_TOKEN` automatically and writes it to `.env`.
+  </Tab>
+  <Tab title="Via .env">
+    ```dotenv
+    TRINAXAI_ALLOW_LAN_SYSTEM=1
+    TRINAXAI_ADMIN_TOKEN=your-strong-random-token-here
+    ```
+    Restart services after editing `.env`.
+  </Tab>
+</Tabs>
+
+When `TRINAXAI_ALLOW_LAN_SYSTEM=0` (the default), a LAN attacker can reach only read-only endpoints:
+
+- `GET /health` — service status
+- `GET /resources` — model list
+- `GET /collections` — collection metadata
+- `GET /app-state` — shared key-value store
+
+Chat and retrieval endpoints are rate-limited to 30 requests per minute per IP.
+
+---
+
+## Admin Token
+
+When LAN system control is enabled, all `/system/*` requests from non-localhost origins must carry a valid admin token.
+
+### Passing the token
+
+```bash
+curl -H "Authorization: Bearer <your-admin-token>" \
+  https://localhost:3333/system/status
+```
+
+### Generating a strong token
+
+```bash
+# macOS / Linux
+openssl rand -hex 32
+
+# Python
+python3 -c "import secrets; print(secrets.token_hex(32))"
+```
+
+Then set it in `.env`:
+
+```dotenv
+TRINAXAI_ADMIN_TOKEN=a4f3c9e2b1d7f5a8c3e6b2d9f1a4c7e3b5d8f2a6c4e7b1d3f5a8c2e4b6d9f1a3
+```
+
+<Note>
+  Localhost requests (from the same machine, `127.0.0.1` or `::1`) are always allowed to system endpoints regardless of the admin token. The token is only required when `TRINAXAI_ALLOW_LAN_SYSTEM=1` and the request comes from a LAN IP.
+</Note>
+
+---
+
+## CORS Configuration
+
+TrinaxAI uses CORS to restrict which browser origins can call the RAG API. By default, only the local PWA origin is allowed.
+
+| Variable | Default | Description |
+|---|---|---|
+| `TRINAXAI_CORS_ORIGINS` | `https://localhost:3334,http://localhost:3334` | Comma-separated list of allowed origins. Add your LAN IP if accessing the PWA from other devices. |
+| `TRINAXAI_CORS_ORIGIN_REGEX` | _(not set)_ | Regex pattern for dynamic origin matching. Useful for LAN IP ranges (e.g., `https://192\.168\.1\.\d+:3334`). |
+
+### Example: Allow LAN access from a phone
+
+```dotenv
+TRINAXAI_CORS_ORIGINS=https://localhost:3334,http://localhost:3334,https://192.168.1.42:3334
+```
+
+### Example: Allow any LAN IP on the 192.168.1.x subnet
+
+```dotenv
+TRINAXAI_CORS_ORIGIN_REGEX=https://192\.168\.1\.\d+:3334
+```
+
+<Warning>
+  Do not set `TRINAXAI_CORS_ORIGINS=*` in production. Wildcard CORS disables the browser's same-origin protection and allows any website you visit to make API calls to your local RAG API.
+</Warning>
+
+---
+
+## TLS Configuration
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `TRINAXAI_RAG_HTTPS` | `bool` | `1` | Serve the RAG API over HTTPS. The installer generates a self-signed certificate in `certs/`. |
+| `TRINAXAI_TLS_VERIFY` | `bool` | `0` | Whether the Python client verifies TLS certificates when calling the RAG API. Defaults to `0` for self-signed localhost certs. Set to `1` when using a CA-signed certificate (e.g., Let's Encrypt). |
+
+```dotenv
+TRINAXAI_RAG_HTTPS=1
+# TRINAXAI_TLS_VERIFY=0
+```
+
+The generated self-signed certificate is valid for `localhost` and your LAN IP. You must trust it on each device that accesses the PWA:
+
+- **iOS**: Safari will prompt to trust the certificate when first accessing `https://[LAN-IP]:3334`.
+- **Android**: Chrome will show a "Your connection is not private" warning; proceed via "Advanced".
+- **Desktop**: Add the cert to your system keychain or browser trust store.
+
+---
+
+## Rate Limiting
+
+The RAG API enforces a token-bucket rate limit to prevent resource exhaustion on local hardware:
+
+| Variable | Default | Description |
+|---|---|---|
+| `TRINAXAI_RATE_LIMIT_PER_MINUTE` | `30` | Maximum chat/retrieval requests per minute per IP address. Thread-safe token bucket implementation. |
+
+```dotenv
+# TRINAXAI_RATE_LIMIT_PER_MINUTE=30
+```
+
+---
+
+## Threat Model Summary
+
+TrinaxAI's threat model (documented in full in [SECURITY.md](https://github.com/TrinaxCode/TrinaxAI/blob/main/SECURITY.md)) makes three assumptions:
+
+1. **Trusted local machine** — the host is not compromised.
+2. **Trusted LAN (when enabled)** — devices on the same WiFi are trusted when `TRINAXAI_ALLOW_LAN_SYSTEM=1`.
+3. **Untrusted internet** — TrinaxAI should never be exposed directly to the internet without a VPN or authenticated reverse proxy.
+
+<Accordion title="Attack vectors and mitigations">
+  | Scenario | Risk | Mitigation |
+  |---|---|---|
+  | **LAN attacker, default config** | Read-only endpoints only; chat is rate-limited. | Default config is safe. |
+  | **LAN attacker + `ALLOW_LAN_SYSTEM=1`, no token** | Full system control — shutdown, indexing, file uploads. | Always set `TRINAXAI_ADMIN_TOKEN`. |
+  | **Remote attacker (internet)** | Should be impossible if ports are not forwarded. | Use a VPN; never forward ports 3333, 3334, 11434. |
+  | **Malicious upload** | Path traversal attempt in uploaded files. | Uploader uses `_safe_rel_path()` and `_collection_slug()` sanitization; absolute paths and `..` entries are rejected. |
+  | **Malicious backup tarball** | Overwrite system files via `backup.sh restore`. | Tarball contents validated before extraction; absolute paths and `..` entries are rejected. |
+  | **Exposed Ollama** | Anyone on LAN can use your models if `OLLAMA_HOST=0.0.0.0`. | Default installer binds Ollama to `127.0.0.1`; firewall port 11434. |
+</Accordion>
+
+---
+
+## Recommendations for LAN and Remote Access
+
+<Warning>
+  Do not expose ports 3333, 3334, or 11434 directly to the internet. These services are designed for local/LAN use and have no brute-force protection against internet-scale attackers.
+</Warning>
+
+For secure remote access, follow these steps:
+
+1. **Use a VPN** — [Tailscale](https://tailscale.com) (zero-config, free for personal use) or WireGuard give you a private IP your devices can reach from anywhere.
+
+   ```bash
+   # Tailscale — one command, works on Linux/macOS/Windows
+   curl -fsSL https://tailscale.com/install.sh | sh
+   tailscale up
+   ```
+
+2. **Firewall the ports** — restrict 3333, 3334, and 11434 to localhost and your VPN subnet.
+
+   ```bash
+   # Linux — allow only localhost and Tailscale (100.x.x.x range)
+   sudo ufw allow from 127.0.0.1 to any port 3333
+   sudo ufw allow from 100.0.0.0/8 to any port 3333
+   sudo ufw deny 3333
+   ```
+
+3. **Set a strong admin token** — if you enable LAN system control:
+
+   ```dotenv
+   TRINAXAI_ALLOW_LAN_SYSTEM=1
+   TRINAXAI_ADMIN_TOKEN=$(openssl rand -hex 32)
+   ```
+
+4. **Bind to localhost only** — if you don't need LAN PWA access:
+
+   ```dotenv
+   TRINAXAI_HOST=127.0.0.1
+   ```
+
+5. **Audit your install** regularly:
+
+   ```bash
+   trinaxai doctor
+   python3 scripts/public_readiness.py
+   ```
+
+---
+
+## Security Audit
+
+The `trinaxai doctor` command performs a live health check of your installation and reports:
+
+- Which profile and models are active
+- Whether Ollama is reachable and which models are downloaded
+- Whether the RAG API is running and healthy
+- Active security settings (`ALLOW_LAN_SYSTEM`, `ADMIN_TOKEN` presence, CORS origins)
+- Dependency versions and any known issues
+
+```bash
+trinaxai doctor
+```
+
+---
+
+## Reporting Vulnerabilities
+
+Do not open a public GitHub issue for security vulnerabilities. Instead, email **trinaxcode@gmail.com** with:
+
+- A description of the vulnerability
+- Steps to reproduce
+- Affected component (RAG API, PWA, CLI, installer, shell scripts)
+- Whether you believe it is remotely exploitable
+
+The team aims to respond within **72 hours** and publish a fix within **7 days** of confirmation. You will receive credit in the GitHub Security Advisory unless you prefer anonymity.
+
+For the full threat model, scope definition, out-of-scope items, and repository security practices, see [SECURITY.md](https://github.com/TrinaxCode/TrinaxAI/blob/main/SECURITY.md) on GitHub.
