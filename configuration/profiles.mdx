@@ -25,7 +25,7 @@ You can override the auto-detected profile at any time:
     ```
   </Tab>
   <Tab title="Via .env">
-    ```dotenv
+    ```ini
     TRINAXAI_PROFILE=max
     ```
     Then restart: `trinaxai stop && trinaxai start`
@@ -52,7 +52,7 @@ The table below shows the exact defaults applied by each profile, drawn directly
 | **RAM target** | ~4–8 GB | ~16 GB | ~32 GB | 64 GB+ or GPU workstation |
 | **`MODEL_GENERAL`** | `llama3.2:1b` | `llama3.2:3b` | `llama3.2:3b` | `llama3.2:3b` |
 | **`MODEL_CODE`** | `qwen2.5-coder:1.5b` | `qwen2.5-coder:3b` | `qwen2.5-coder:3b` | `qwen2.5-coder:3b` |
-| **`MODEL_DEEP`** | `qwen2.5-coder:1.5b` | `qwen2.5-coder:7b` | `qwen2.5-coder:7b` | `qwen2.5-coder:14b` |
+| **`MODEL_DEEP`** | `qwen2.5-coder:1.5b` | `qwen2.5-coder:3b` | `qwen2.5-coder:7b` | `qwen2.5-coder:14b` |
 | **`MODEL_FAST`** | `llama3.2:1b` | `llama3.2:3b` | `llama3.2:3b` | `llama3.2:3b` |
 | **Embed preset** | `lite` | `balanced` | `balanced` | `balanced` |
 | **Embed model** | `nomic-embed-text` | `bge-m3` | `bge-m3` | `bge-m3` |
@@ -84,7 +84,7 @@ The table below shows the exact defaults applied by each profile, drawn directly
   - **Concurrency**: 1 embed worker, batch size 1 — serialised embedding to avoid OOM during indexing.
   - **Keep-alive**: `0s` for LLM — model is unloaded after each response to free RAM for embeddings and the OS.
 
-  ```dotenv
+  ```ini
   TRINAXAI_PROFILE=8gb
   ```
 </Accordion>
@@ -92,13 +92,13 @@ The table below shows the exact defaults applied by each profile, drawn directly
 <Accordion title="16gb — Balanced default (~16 GB RAM)">
   The factory default. Balanced for everyday coding, documentation search, and RAG queries.
 
-  - **Models**: `llama3.2:3b` for chat, `qwen2.5-coder:3b` for code, `qwen2.5-coder:7b` for deep analysis.
+  - **Models**: `llama3.2:3b` for chat, `qwen2.5-coder:3b` for code and deep analysis (the `max`/`32gb` profile upgrades deep analysis to `qwen2.5-coder:7b`).
   - **Embeddings**: `bge-m3` (1024 dims, `balanced` preset) — multilingual, high-quality, 8K token context.
   - **Context**: 4096 tokens — comfortably fits a system prompt + 4 source chunks + response.
   - **Concurrency**: 2 embed workers, batch size 8 — parallel embedding without crowding the LLM.
   - **Keep-alive**: `10m` in fast mode — models stay warm for several minutes between queries.
 
-  ```dotenv
+  ```ini
   TRINAXAI_PROFILE=16gb
   ```
 </Accordion>
@@ -106,13 +106,13 @@ The table below shows the exact defaults applied by each profile, drawn directly
 <Accordion title="max / 32gb — High-quality (32 GB RAM, no dedicated GPU needed)">
   Unlocks the 7b deep model and wider context. Suitable for large codebases and multi-file analysis.
 
-  - **Models**: Same fleet as 16gb except `MODEL_DEEP` = `qwen2.5-coder:7b` is now always used (on 16gb it's still the default, but max raises the keep-alive and workers to support it better).
+  - **Models**: Same general/code fleet as 16gb, but `MODEL_DEEP` is upgraded to `qwen2.5-coder:7b` — the first profile to unlock the larger deep-analysis model.
   - **Context**: 8192 tokens — fits longer documents and more retrieved chunks.
   - **Concurrency**: 4 embed workers, batch size 8 — faster bulk indexing.
   - **Keep-alive**: `30m` — models stay warm for extended work sessions.
   - **Retrieval**: `TOP_K=5`, `FUSION_CANDIDATES=12` — broader retrieval sweep.
 
-  ```dotenv
+  ```ini
   TRINAXAI_PROFILE=max
   ```
 </Accordion>
@@ -127,7 +127,7 @@ The table below shows the exact defaults applied by each profile, drawn directly
   - **Chunking**: Larger chunks (`CHUNK_SIZE=1536`, `CHUNK_OVERLAP=220`) capture more context per embedding.
   - **Retrieval**: `TOP_K=6` (up to 8 in quality mode), `FUSION_CANDIDATES=20–32` — exhaustive retrieval.
 
-  ```dotenv
+  ```ini
   TRINAXAI_PROFILE=ultra
   ```
 
@@ -146,7 +146,7 @@ Performance mode is a secondary dial that fine-tunes chunk sizes and retrieval d
 | `balanced` | 1024 tokens | 150 tokens | 4–6 (by profile) | 8–20 (by profile) | General daily use |
 | `quality` | 1024 tokens | 150 tokens | 5–8 (by profile) | 12–32 (by profile) | Deep research, broad retrieval |
 
-```dotenv
+```ini
 TRINAXAI_PERFORMANCE_MODE=fast      # default — fastest responses
 TRINAXAI_PERFORMANCE_MODE=balanced  # middle ground
 TRINAXAI_PERFORMANCE_MODE=quality   # best retrieval precision
@@ -170,7 +170,7 @@ The embedding preset is selected automatically from the profile but can be overr
 
 To use a lighter embedding model on a `16gb` machine (e.g., to reserve RAM for larger LLMs):
 
-```dotenv
+```ini
 TRINAXAI_PROFILE=16gb
 TRINAXAI_EMBED_PRESET=lite
 ```
@@ -185,7 +185,7 @@ TRINAXAI_EMBED_PRESET=lite
 
 A profile is a set of defaults, not a lock. Every value it sets can be overridden by the corresponding environment variable. The profile applies first; explicit variables override it.
 
-```dotenv
+```ini
 # Use the 16gb profile but with a larger context window and the deep model always warm
 TRINAXAI_PROFILE=16gb
 TRINAXAI_NUM_CTX=8192

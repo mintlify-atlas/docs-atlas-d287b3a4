@@ -50,7 +50,7 @@ TrinaxAI is a **three-tier local stack** where every service runs on your device
     Chat via the PWA or CLI with an auto-routing heuristic that picks the best Ollama model for each query. Deep research mode decomposes questions across multiple RAG passes.
   </Card>
   <Card title="Voice & Vision" icon="microphone" href="/features/voice-and-vision">
-    Full voice conversations with speech-to-text and text-to-speech, plus local image and screenshot analysis powered by `qwen2.5vl` — no third-party API required.
+    Full voice conversations with speech-to-text and text-to-speech, plus local image and screenshot analysis powered by `qwen2.5vl:3b` — no third-party API required.
   </Card>
   <Card title="Memory & Collections" icon="brain" href="/features/memory-and-collections">
     Persistent memory stores "remember that…" facts locally and syncs across devices. Knowledge Collections let you create separate RAG namespaces and query one or many at once.
@@ -79,17 +79,18 @@ The installer auto-detects your available RAM and selects the best model profile
 
 | Profile | RAM Target | General model | Code model | Deep model | Embedding |
 |---------|-----------|---------------|------------|------------|-----------|
-| `4gb` | ~4 GB | `llama3.2:1b` | `qwen2.5-coder:1.5b` | `qwen2.5-coder:1.5b` | `nomic-embed-text` |
 | `8gb` | ~8 GB | `llama3.2:1b` | `qwen2.5-coder:1.5b` | `qwen2.5-coder:1.5b` | `nomic-embed-text` |
-| `16gb` | ~16 GB | `llama3.2:3b` | `qwen2.5-coder:3b` | `qwen2.5-coder:7b` | `bge-m3` |
+| `16gb` | ~16 GB | `llama3.2:3b` | `qwen2.5-coder:3b` | `qwen2.5-coder:3b` | `bge-m3` |
 | `max` | 32 GB+ | `llama3.2:3b` | `qwen2.5-coder:3b` | `qwen2.5-coder:7b` | `bge-m3` |
-| `ultra` | 64 GB+ | `llama3.2:3b` | `qwen2.5-coder:7b` | `qwen2.5-coder:7b` | `bge-m3` |
+| `ultra` | 64 GB+ | `llama3.2:3b` | `qwen2.5-coder:3b` | `qwen2.5-coder:14b` | `bge-m3` |
+
+The available embedding models are `bge-m3` (balanced, multilingual), `nomic-embed-text` (lite, faster), and `all-minilm` (fast, smallest). The profile sets the default preset, which you can override with `TRINAXAI_EMBED_PRESET` in `.env`.
 
 The **auto-router** selects among `MODEL_GENERAL`, `MODEL_CODE`, `MODEL_DEEP`, and `MODEL_FAST` at query time using a heuristic classifier — no extra LLM call needed.
 
 ## What's included
 
-- **Developer CLI** — `trinaxai ask`, `trinaxai chat`, `trinaxai index`, `trinaxai doctor`, `trinaxai research`, `trinaxai memory`, `trinaxai collections`, `trinaxai watch`, `trinaxai export`
+- **Developer CLI** — `trinaxai ask`, `trinaxai chat`, `trinaxai index`, `trinaxai browse`, `trinaxai doctor`, `trinaxai research`, `trinaxai memory`, `trinaxai collections`, `trinaxai watch`, `trinaxai export`, `trinaxai obsidian`
 - **PWA** — 18 TypeScript components, session history, search, export to Markdown/PDF/Word, in-app docs, 7-step onboarding wizard
 - **Bilingual UI** — Spanish and English, auto-detected from browser locale
 - **One-command installers** — `install.sh` (Linux/macOS) and `install.ps1` (Windows), with guided update and uninstall scripts

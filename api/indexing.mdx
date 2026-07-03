@@ -47,6 +47,9 @@ Upload a folder for indexing via a multipart form. The browser's native folder p
 <ResponseField name="saved" type="integer">Number of files successfully saved to the staging directory.</ResponseField>
 <ResponseField name="skipped" type="integer">Number of files skipped (oversized, unsafe paths, or write errors).</ResponseField>
 <ResponseField name="bytes" type="integer">Total bytes saved to disk.</ResponseField>
+<ResponseField name="projects" type="array">
+  List of project names already known to the in-memory index at upload time. Usually `[]` at job start since indexing runs in the background.
+</ResponseField>
 <ResponseField name="collection_id" type="string">Resolved collection ID for this job.</ResponseField>
 <ResponseField name="collection_name" type="string">Display name of the resolved collection.</ResponseField>
 
@@ -79,7 +82,7 @@ curl -X POST http://localhost:3333/system/index-upload \
 
 ---
 
-## GET /system/index-jobs/{job_id}
+## GET /system/index-jobs/\{job_id\}
 
 Poll the status and progress of a running or completed indexing job.
 
@@ -162,7 +165,7 @@ curl http://localhost:3333/system/index-jobs/f3a2b1c4d5e6f7a8b9c0d1e2f3a4b5c6 \
 
 ---
 
-## POST /system/index-jobs/{job_id}/cancel
+## POST /system/index-jobs/\{job_id\}/cancel
 
 Request cancellation of a running index job. The subprocess is sent `SIGTERM` and the job transitions to `"cancelled"` status. Already-saved files in the staging directory are not removed.
 

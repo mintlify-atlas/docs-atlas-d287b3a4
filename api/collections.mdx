@@ -112,7 +112,7 @@ curl -X POST http://localhost:3333/collections \
 
 ---
 
-## PATCH /collections/{collection_id}
+## PATCH /collections/\{collection_id\}
 
 Rename an existing collection. Only the display `name` can be changed — the `id` (slug) is immutable after creation.
 
@@ -162,7 +162,7 @@ curl -X PATCH http://localhost:3333/collections/my-project \
 
 ---
 
-## DELETE /collections/{collection_id}
+## DELETE /collections/\{collection_id\}
 
 Delete a collection and permanently remove all of its indexed chunks from the vector store. The in-memory retriever is rebuilt automatically after deletion.
 

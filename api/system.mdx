@@ -1,7 +1,7 @@
 ---
 title: "System Control API: Start, Stop, and Self-Test"
 sidebarTitle: "System"
-description: "Protected /system endpoints to start, stop, and health-check TrinaxAI services. All require localhost access or an admin bearer token."
+description: "Protected /system endpoints to start, stop, and health-check TrinaxAI services. All require localhost access or an X-Admin-Token header."
 ---
 
 The system control endpoints manage the lifecycle of local TrinaxAI services — Ollama and the RAG API process — and provide an automated self-test for CI/CD and diagnostic workflows. All endpoints on this page are protected.
@@ -20,7 +20,7 @@ The system control endpoints manage the lifecycle of local TrinaxAI services —
 # Localhost — no token needed by default
 curl -X POST http://localhost:3333/system/reload
 
-# Remote LAN or production — use Bearer token
+# Remote LAN or production — use X-Admin-Token header
 curl -X POST http://192.168.1.100:3333/system/reload \
   -H "X-Admin-Token: your-admin-token"
 ```

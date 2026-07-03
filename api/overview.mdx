@@ -1,7 +1,7 @@
 ---
-title: "TrinaxAI RAG API Overview"
+title: "TrinaxAI RAG API: Complete Endpoint Reference Guide"
 sidebarTitle: "Overview"
-description: "The TrinaxAI RAG API is a FastAPI server on port 3333. It provides OpenAI-compatible chat, collections, memory, indexing, and system control endpoints."
+description: "FastAPI server on port 3333 exposing OpenAI-compatible chat, RAG collections, memory, file indexing, file watching, and system control endpoints."
 ---
 
 The TrinaxAI RAG API is a [FastAPI](https://fastapi.tiangolo.com/) server that powers the PWA, CLI, and any third-party integrations. It runs locally on port **3333** and exposes an OpenAI-compatible chat endpoint alongside dedicated endpoints for RAG collections, persistent memory, file indexing, file watching, and system control. By default the server binds to `0.0.0.0:3333` so the PWA is reachable from phones and tablets on the same network; you can restrict it to `127.0.0.1` via the `TRINAXAI_HOST` environment variable.
@@ -39,7 +39,7 @@ All endpoints return `application/json` unless stated otherwise. File upload end
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/v1/sources` | List indexed source files with chunk counts and a preview snippet. |
-| `GET` | `/v1/sources/{collection}/{file}/chunks` | List individual chunks for a specific file within a collection. |
+| `GET` | `/v1/sources/{collection}/{file:path}/chunks` | List individual chunks for a specific file within a collection. |
 
 ### Usage & Stats
 
@@ -54,7 +54,7 @@ All endpoints return `application/json` unless stated otherwise. File upload end
 |---|---|---|
 | `GET` | `/v1/memory` | List all persistent memory entries. |
 | `POST` | `/v1/memory` | Append a new memory entry. |
-| `DELETE` | `/v1/memory/{id}` | Delete a memory entry by ID. |
+| `DELETE` | `/v1/memory/{memory_id}` | Delete a memory entry by ID. |
 | `POST` | `/v1/memory/refresh` | Re-summarise all memory entries into a short context-injectable note. |
 | `GET` | `/v1/memory/summary` | Read the current LLM-generated memory summary. |
 
@@ -93,8 +93,8 @@ All endpoints return `application/json` unless stated otherwise. File upload end
 |---|---|---|
 | `GET` | `/collections` | List all RAG collections. |
 | `POST` | `/collections` | Create a new collection. |
-| `PATCH` | `/collections/{id}` | Rename a collection. |
-| `DELETE` | `/collections/{id}` | Delete a collection and all its indexed chunks. |
+| `PATCH` | `/collections/{collection_id}` | Rename a collection. |
+| `DELETE` | `/collections/{collection_id}` | Delete a collection and all its indexed chunks. |
 
 ### Indexing
 
@@ -168,7 +168,7 @@ TRINAXAI_RATE_LIMIT_WINDOW_SECONDS=60
 |---|---|
 | `200` | Success |
 | `400` | Bad request — missing parameters or invalid data |
-| `401` | Unauthorized — system endpoint called without a valid token |
+| `403` | Forbidden — system endpoint called without a valid token or from an untrusted origin |
 | `404` | Not found — collection, job, or memory entry does not exist |
 | `429` | Rate limited — 30 req/min per IP exceeded |
 | `500` | Internal server error |

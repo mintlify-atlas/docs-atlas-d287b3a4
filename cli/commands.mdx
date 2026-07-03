@@ -1,5 +1,5 @@
 ---
-title: "TrinaxAI CLI Command Reference"
+title: "TrinaxAI CLI Command Reference: ask, chat, index, and More"
 sidebarTitle: "Commands"
 description: "Complete reference for all trinaxai CLI commands — ask, chat, index, research, doctor, memory, collections, watch, browse, export, start, and stop."
 ---
@@ -86,7 +86,7 @@ trinaxai chat [--prompt "text"] [--session <name>] [--collections <ids>]
 | `/exit` or `/quit` | Exit the chat REPL |
 | `/clear` | Clear in-memory conversation history (session log is kept) |
 | `/model [name]` | Show the current model hint or set a new one for subsequent messages |
-| `/index [path]` | Index a folder directly from within chat (defaults to `.`) |
+| `/index [path]` | Index a folder directly from within chat (defaults to current directory) |
 | `/status` | Print local service status |
 
 **Examples**
@@ -408,7 +408,7 @@ trinaxai browse <list-collections|list-files|show-chunks> [flags]
 
 | Subcommand | Description |
 |---|---|
-| `list-collections` (or `list`) | Show all available collections |
+| `list-collections` | Show all available collections |
 | `list-files` | List every indexed file in a collection with chunk count, size, and mtime |
 | `show-chunks` | Display the raw text chunks stored for a given file |
 

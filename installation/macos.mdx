@@ -1,7 +1,7 @@
 ---
 title: "Install TrinaxAI on macOS (Intel and Apple Silicon)"
 sidebarTitle: "macOS"
-description: "Install TrinaxAI on macOS with one command. Supports Intel and Apple Silicon Macs. Uses launchctl for service management."
+description: "Install TrinaxAI on macOS with one command. Supports Intel and Apple Silicon Macs. Installs via Homebrew and uses launchctl for service autostart."
 ---
 
 TrinaxAI runs entirely on your Mac — no cloud, no subscriptions, no data leaving your network. The installer detects whether you're on **Apple Silicon** (M1/M2/M3/M4) or **Intel**, auto-sizes a hardware profile based on your RAM, writes `.env`, installs dependencies via **Homebrew**, builds the PWA frontend, and registers a **LaunchAgent** in `~/Library/LaunchAgents/` for autostart. Apple Silicon gets Metal-accelerated inference through Ollama automatically; Intel Macs fall back to CPU.

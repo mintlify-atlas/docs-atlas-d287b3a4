@@ -1,7 +1,7 @@
 ---
 title: "Chat Completions and Research API Endpoints"
 sidebarTitle: "Chat"
-description: "POST /v1/chat/completions — OpenAI-compatible RAG chat with SSE streaming. POST /v1/research — deep multi-pass research with sub-question decomposition."
+description: "OpenAI-compatible RAG chat with optional SSE streaming via POST /v1/chat/completions. Deep multi-pass research queries via POST /v1/research."
 ---
 
 TrinaxAI exposes two primary query endpoints. `/v1/chat/completions` is an OpenAI-compatible interface that retrieves context from your indexed documents and streams a grounded response via SSE. `/v1/research` performs deep multi-pass retrieval with sub-question decomposition for complex analytical queries. Both endpoints are rate-limited to **30 requests per minute per IP** and are open to trusted CORS origins by default.

@@ -58,7 +58,7 @@ System endpoints (`/system/*`) provide privileged operations: starting and stopp
     The installer generates a strong `TRINAXAI_ADMIN_TOKEN` automatically and writes it to `.env`.
   </Tab>
   <Tab title="Via .env">
-    ```dotenv
+    ```ini
     TRINAXAI_ALLOW_LAN_SYSTEM=1
     TRINAXAI_ADMIN_TOKEN=your-strong-random-token-here
     ```
@@ -100,7 +100,7 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 
 Then set it in `.env`:
 
-```dotenv
+```ini
 TRINAXAI_ADMIN_TOKEN=a4f3c9e2b1d7f5a8c3e6b2d9f1a4c7e3b5d8f2a6c4e7b1d3f5a8c2e4b6d9f1a3
 ```
 
@@ -117,17 +117,17 @@ TrinaxAI uses CORS to restrict which browser origins can call the RAG API. By de
 | Variable | Default | Description |
 |---|---|---|
 | `TRINAXAI_CORS_ORIGINS` | `https://localhost:3334,http://localhost:3334` | Comma-separated list of allowed origins. Add your LAN IP if accessing the PWA from other devices. |
-| `TRINAXAI_CORS_ORIGIN_REGEX` | _(not set)_ | Regex pattern for dynamic origin matching. Useful for LAN IP ranges (e.g., `https://192\.168\.1\.\d+:3334`). |
+| `TRINAXAI_CORS_ORIGIN_REGEX` | LAN subnet regex (localhost, 10.x, 192.168.x, 172.16-31.x on ports 3334/3335) | Regex pattern for dynamic origin matching. Override to narrow or expand the allowed subnet (e.g., `https://192\.168\.1\.\d+:3334`). |
 
 ### Example: Allow LAN access from a phone
 
-```dotenv
+```ini
 TRINAXAI_CORS_ORIGINS=https://localhost:3334,http://localhost:3334,https://192.168.1.42:3334
 ```
 
 ### Example: Allow any LAN IP on the 192.168.1.x subnet
 
-```dotenv
+```ini
 TRINAXAI_CORS_ORIGIN_REGEX=https://192\.168\.1\.\d+:3334
 ```
 
@@ -144,7 +144,7 @@ TRINAXAI_CORS_ORIGIN_REGEX=https://192\.168\.1\.\d+:3334
 | `TRINAXAI_RAG_HTTPS` | `bool` | `1` | Serve the RAG API over HTTPS. The installer generates a self-signed certificate in `certs/`. |
 | `TRINAXAI_TLS_VERIFY` | `bool` | `0` | Whether the Python client verifies TLS certificates when calling the RAG API. Defaults to `0` for self-signed localhost certs. Set to `1` when using a CA-signed certificate (e.g., Let's Encrypt). |
 
-```dotenv
+```ini
 TRINAXAI_RAG_HTTPS=1
 # TRINAXAI_TLS_VERIFY=0
 ```
@@ -165,7 +165,7 @@ The RAG API enforces a token-bucket rate limit to prevent resource exhaustion on
 |---|---|---|
 | `TRINAXAI_RATE_LIMIT_PER_MINUTE` | `30` | Maximum chat/retrieval requests per minute per IP address. Thread-safe token bucket implementation. |
 
-```dotenv
+```ini
 # TRINAXAI_RATE_LIMIT_PER_MINUTE=30
 ```
 
@@ -219,14 +219,14 @@ For secure remote access, follow these steps:
 
 3. **Set a strong admin token** — if you enable LAN system control:
 
-   ```dotenv
+   ```ini
    TRINAXAI_ALLOW_LAN_SYSTEM=1
    TRINAXAI_ADMIN_TOKEN=$(openssl rand -hex 32)
    ```
 
 4. **Bind to localhost only** — if you don't need LAN PWA access:
 
-   ```dotenv
+   ```ini
    TRINAXAI_HOST=127.0.0.1
    ```
 

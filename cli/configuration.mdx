@@ -143,11 +143,4 @@ trinaxai --engine rag ask "What does the payments module do?"
 trinaxai --engine ollama ask "Write a Python decorator that retries on exception"
 ```
 
-Inside the `chat` REPL you can switch engines per-message using:
-
-```
-you> /engine rag
-you> /engine ollama
-```
-
 To make `rag` or `ollama` the persistent default, set `engine = "rag"` (or `"ollama"`) in the `[defaults]` section of `~/.config/trinaxai/config.toml`.

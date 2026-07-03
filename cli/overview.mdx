@@ -1,5 +1,5 @@
 ---
-title: "TrinaxAI CLI: Terminal-Native AI Workflows"
+title: "TrinaxAI CLI Overview: Terminal-Native AI Workflows"
 sidebarTitle: "Overview"
 description: "The trinaxai CLI lets you ask questions, chat, index code, run research, and manage memory from your terminal. Installed via pip as a Python package."
 ---
@@ -44,8 +44,6 @@ trinaxai doctor
 | `trinaxai export` | Export a saved chat session to Markdown |
 | `trinaxai memory` | Manage persistent memory entries |
 | `trinaxai collections` | List or manage RAG knowledge collections |
-| `trinaxai --engine rag` | Force RAG (context-aware) engine for a query |
-| `trinaxai --engine ollama` | Force Ollama (generative) engine for a query |
 
 ## Global Flags
 
@@ -61,7 +59,7 @@ These flags apply to every command and are placed before the subcommand name:
 | `--version` | Print the CLI version and exit |
 
 <Tip>
-  `--engine` is a per-query flag available on `ask` and `chat` (via `/engine` slash command inside the REPL). To change the default engine for all commands, set `engine = "rag"` or `engine = "ollama"` in `~/.config/trinaxai/config.toml`.
+  `--engine` is a global flag placed before the subcommand (e.g. `trinaxai --engine rag ask "..."`) that forces the engine for a single invocation. To change the default engine for all commands, set `engine = "rag"` or `engine = "ollama"` in `~/.config/trinaxai/config.toml`.
 </Tip>
 
 ## Same Backend as the PWA

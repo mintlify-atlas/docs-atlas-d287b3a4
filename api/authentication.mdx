@@ -1,10 +1,10 @@
 ---
-title: "Authenticating with the TrinaxAI RAG API"
+title: "TrinaxAI RAG API: Authentication and Authorization"
 sidebarTitle: "Authentication"
-description: "Chat endpoints are open to trusted LAN origins. System endpoints require localhost access or an admin bearer token set via TRINAXAI_ADMIN_TOKEN."
+description: "Chat endpoints are open to trusted LAN origins. System endpoints require localhost access or an admin token passed via the X-Admin-Token header."
 ---
 
-The TrinaxAI RAG API uses a **two-tier authentication model** that balances local usability with security. Chat and read-only endpoints are intentionally open to trusted LAN origins — so the PWA on your phone works without configuration — while all mutating system endpoints are protected and require either localhost access or an explicit admin bearer token.
+The TrinaxAI RAG API uses a **two-tier authentication model** that balances local usability with security. Chat and read-only endpoints are intentionally open to trusted LAN origins — so the PWA on your phone works without configuration — while all mutating system endpoints are protected and require either localhost access or an explicit admin token.
 
 ---
 
@@ -34,10 +34,10 @@ The following endpoints require the caller to be on localhost, a trusted LAN IP 
 |---|---|
 | **System control** | All `/system/*` routes |
 | **App state** | `PUT /app-state`, `DELETE /app-state` |
-| **Memory writes** | `POST /v1/memory`, `DELETE /v1/memory/{id}`, `POST /v1/memory/refresh` |
-| **Collection management** | `POST /collections`, `PATCH /collections/{id}`, `DELETE /collections/{id}` |
+| **Memory writes** | `POST /v1/memory`, `DELETE /v1/memory/{memory_id}`, `POST /v1/memory/refresh` |
+| **Collection management** | `POST /collections`, `PATCH /collections/{collection_id}`, `DELETE /collections/{collection_id}` |
 | **Research** | `POST /v1/research` |
-| **Knowledge Browser** | `GET /v1/sources`, `GET /v1/sources/{collection}/{file}/chunks` |
+| **Knowledge Browser** | `GET /v1/sources`, `GET /v1/sources/{collection}/{file:path}/chunks` |
 | **Usage recording** | `POST /v1/usage`, `GET /v1/stats` |
 | **File watcher** | `POST /v1/watch/start`, `POST /v1/watch/stop` |
 
@@ -65,19 +65,15 @@ TRINAXAI_ADMIN_TOKEN=your-strong-random-token
 
 When `TRINAXAI_ALLOW_LAN_SYSTEM=1` is set, requests from any private or link-local IP (RFC 1918 ranges: `10.x.x.x`, `172.16–31.x.x`, `192.168.x.x`) are considered trusted. The `--lan-system` install flag enables this automatically and generates a strong admin token.
 
-### 3. Admin Bearer Token
+### 3. Admin Token
 
-Set `TRINAXAI_ADMIN_TOKEN` in `.env` to require a token for all protected endpoints. Pass it in the `Authorization` header:
+Set `TRINAXAI_ADMIN_TOKEN` in `.env` to require a token for all protected endpoints. Pass it in the `X-Admin-Token` request header:
 
 ```
-Authorization: Bearer <your-admin-token>
+X-Admin-Token: <your-admin-token>
 ```
 
 When a token is configured and an incorrect one is supplied, the API returns `HTTP 403 Forbidden` immediately — it does not fall through to the localhost check.
-
-<Note>
-  The API reads `Authorization: Bearer <token>` via the standard HTTP header. Some internal code also accepts the legacy `X-Admin-Token` header — use the `Authorization` form for all new integrations.
-</Note>
 
 ---
 
@@ -166,7 +162,7 @@ curl -X POST https://localhost:3333/v1/chat/completions \
 ```bash Authenticated System Endpoint (curl)
 # System reload — admin token required
 curl -X POST https://localhost:3333/system/reload \
-  -H 'Authorization: Bearer your-admin-token' \
+  -H 'X-Admin-Token: your-admin-token' \
   --insecure
 ```
 
@@ -174,7 +170,7 @@ curl -X POST https://localhost:3333/system/reload \
 # Collection creation — admin token required
 curl -X POST https://localhost:3333/collections \
   -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer your-admin-token' \
+  -H 'X-Admin-Token: your-admin-token' \
   -d '{"name": "My Project"}' \
   --insecure
 ```
@@ -182,7 +178,7 @@ curl -X POST https://localhost:3333/collections \
 ```bash Run Self-Test (curl)
 # Self-test — admin token required
 curl -X POST https://localhost:3333/system/self-test \
-  -H 'Authorization: Bearer your-admin-token' \
+  -H 'X-Admin-Token: your-admin-token' \
   --insecure
 ```
 
